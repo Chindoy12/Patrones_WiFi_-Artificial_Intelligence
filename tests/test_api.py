@@ -22,6 +22,8 @@ def test_detect_returns_camel_case_contract(client):
     assert response.status_code == 200
     assert body["anomalyDetected"] is True
     assert body["simulatedData"] is True
+    assert body["recommendationSource"] == "RULES"
+    assert body["message"].startswith("Comportamiento inusual")
     assert {"anomalyScore", "severity", "message", "contributingFeatures", "modelVersion"} <= body.keys()
 
 
@@ -43,3 +45,9 @@ def test_model_info(client):
 
     assert body["algorithm"] == "IsolationForest"
     assert len(body["features"]) == 8
+    assert body["recommendationEngine"] == "reglas"
+
+
+def test_interactive_docs_are_not_exposed(client):
+    assert client.get("/docs").status_code == 404
+    assert client.get("/openapi.json").status_code == 404
