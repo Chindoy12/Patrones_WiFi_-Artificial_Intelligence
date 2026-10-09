@@ -11,6 +11,7 @@ DEGRADED = {"latency": 300, "jitter": 80, "packetLoss": 25, "bandwidth": 5, "sig
 def client(tmp_path_factory, monkeypatch_session):
     monkeypatch_session.setattr("app.main.MODEL_PATH", str(tmp_path_factory.mktemp("model") / "model.joblib"))
     monkeypatch_session.setattr("app.main.API_KEY", "test-key")
+    monkeypatch_session.delenv("ANTHROPIC_API_KEY", raising=False)
     from app.main import app
     with TestClient(app, headers={"X-API-Key": "test-key"}) as test_client:
         yield test_client
