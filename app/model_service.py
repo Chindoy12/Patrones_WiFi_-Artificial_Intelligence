@@ -13,7 +13,7 @@ from app.schemas import AnalysisRequest, AnalysisResponse, ModelInfo, Severity
 logger = logging.getLogger(__name__)
 
 MODEL_VERSION = "isolation-forest-1.0"
-TRAINING_SOURCE = "synthetic baseline of normal Wi-Fi behaviour (simulated data)"
+TRAINING_SOURCE = "línea base sintética de comportamiento Wi-Fi normal (datos simulados)"
 
 # Direction in which a deviation is harmful: +1 higher is worse, -1 lower is worse.
 HARMFUL_DIRECTION = {
@@ -21,15 +21,21 @@ HARMFUL_DIRECTION = {
     "traffic_volume": 1, "connected_devices": 1, "packet_count": 1,
 }
 
+FEATURE_LABELS = {
+    "latency": "latencia", "jitter": "jitter", "packet_loss": "pérdida de paquetes", "bandwidth": "ancho de banda",
+    "signal_strength": "intensidad de señal", "traffic_volume": "volumen de tráfico",
+    "connected_devices": "dispositivos conectados", "packet_count": "cantidad de paquetes",
+}
+
 RECOMMENDATIONS = {
-    "latency": "Check channel congestion and the uplink/backhaul of the access point.",
-    "jitter": "Review QoS settings and interference on the current channel.",
-    "packet_loss": "Inspect radio interference and retransmissions; consider changing channel.",
-    "bandwidth": "Verify ISP link capacity and per-client bandwidth limits.",
-    "signal_strength": "Reposition the access point or add coverage in this zone.",
-    "traffic_volume": "Inspect traffic for unusual bulk transfers.",
-    "connected_devices": "Balance clients across access points or add capacity.",
-    "packet_count": "Look for scanning or flooding behaviour in the traffic capture.",
+    "latency": "Revisa la congestión del canal y el enlace de salida (backhaul) del punto de acceso.",
+    "jitter": "Revisa la configuración de QoS y la interferencia en el canal actual.",
+    "packet_loss": "Revisa interferencias de radio y retransmisiones; considera cambiar de canal.",
+    "bandwidth": "Verifica la capacidad del enlace del proveedor y los límites de ancho de banda por cliente.",
+    "signal_strength": "Reubica el punto de acceso o agrega cobertura en esta zona.",
+    "traffic_volume": "Revisa el tráfico en busca de transferencias masivas inusuales.",
+    "connected_devices": "Distribuye los clientes entre puntos de acceso o agrega capacidad.",
+    "packet_count": "Busca comportamientos de escaneo o inundación en la captura de tráfico.",
 }
 
 DEVIATION_LIMIT = 2.0
@@ -108,9 +114,10 @@ class AnomalyDetectionService:
             simulated_data=request.simulated_data,
         )
 
-    def info(self) -> ModelInfo:
+    def info(self, recommendation_engine: str = "reglas") -> ModelInfo:
         return ModelInfo(algorithm="IsolationForest", model_version=MODEL_VERSION, features=FEATURES,
-                         threshold=round(self.threshold, 4), trained_on=TRAINING_SOURCE)
+                         threshold=round(self.threshold, 4), trained_on=TRAINING_SOURCE,
+                         recommendation_engine=recommendation_engine)
 
     def _severity(self, score: float) -> Severity:
         margin = score - self.threshold
@@ -129,15 +136,16 @@ class AnomalyDetectionService:
     @staticmethod
     def _message(detected: bool, contributors: list[str], outliers: int, total: int) -> str:
         if not detected:
-            return f"Latest measurement within normal behaviour ({outliers}/{total} outliers in window)"
+            return f"La última medición está dentro del comportamiento normal ({outliers}/{total} valores atípicos en la ventana)"
         if contributors:
-            return f"Unusual network behaviour detected in: {', '.join(contributors)}"
-        return "Unusual combination of metrics detected"
+            labels = ", ".join(FEATURE_LABELS[f] for f in contributors)
+            return f"Comportamiento inusual detectado en: {labels}"
+        return "Se detectó una combinación inusual de métricas"
 
     @staticmethod
     def _recommendation(contributors: list[str]) -> str:
         if not contributors:
-            return "Review recent configuration changes and compare with previous measurements."
+            return "Revisa los cambios recientes de configuración y compara con mediciones anteriores."
         return " ".join(RECOMMENDATIONS[f] for f in contributors[:2])
 
     def _state(self) -> dict:
