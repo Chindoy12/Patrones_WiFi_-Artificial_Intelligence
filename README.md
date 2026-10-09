@@ -41,6 +41,17 @@ devuelven en `imputedFeatures`), `log1p` sobre variables de cola larga.
 `contributingFeatures` lista las variables con desviación robusta > 2 en la dirección dañina (más latencia, menos
 señal…), y de ahí sale la recomendación.
 
+## Recomendaciones con Claude (opcional)
+
+Si se define `ANTHROPIC_API_KEY`, después de la detección `ClaudeAdvisor` (`app/llm_advisor.py`) pide a Claude
+hasta 3 recomendaciones en español y reemplaza la recomendación por reglas. La respuesta indica el origen en
+`recommendationSource` (`CLAUDE` o `RULES`).
+
+- Modelo por defecto: `claude-haiku-4-5-20251001` (cambiable con `CLAUDE_MODEL`).
+- Solo se envían métricas agregadas y el veredicto del modelo; nunca IP, MAC, nombres de usuario ni identificadores.
+- Si la API falla, se agota la cuota o no hay clave, se usa la recomendación por reglas y el análisis no se interrumpe.
+- La API de Claude se paga aparte en la Consola de Claude; una suscripción Claude Pro no la incluye.
+
 ## Endpoints
 
 | Método | Ruta | Descripción |
@@ -73,8 +84,9 @@ Entre 1 y 1 000 mediciones. `latency`, `jitter` y `packetLoss` son obligatorios;
   "anomalyDetected": true,
   "anomalyScore": 0.7103,
   "severity": "HIGH",
-  "message": "Unusual network behaviour detected in: packet_loss, connected_devices, jitter",
-  "recommendation": "Inspect radio interference and retransmissions; consider changing channel. ...",
+  "message": "Comportamiento inusual detectado en: pérdida de paquetes, dispositivos conectados, jitter",
+  "recommendation": "Revisa interferencias de radio y retransmisiones; considera cambiar de canal. ...",
+  "recommendationSource": "RULES",
   "contributingFeatures": ["packet_loss", "connected_devices", "jitter"],
   "anomalousSamples": 50,
   "sampleSize": 50,
@@ -93,7 +105,7 @@ pip install -r requirements.txt
 cp .env.example .env                       # AI_API_KEY igual a la del backend
 export $(grep -v '^#' .env | xargs)
 uvicorn app.main:app --port 8000
-pytest                                     # 13 pruebas
+pytest                                     # 19 pruebas
 docker build -t wifisense-ai . && docker run -p 8000:8000 -e AI_API_KEY=... wifisense-ai
 ```
 
