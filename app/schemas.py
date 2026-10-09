@@ -1,5 +1,6 @@
 from datetime import datetime
 from enum import Enum
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
@@ -40,6 +41,7 @@ class AnalysisResponse(CamelModel):
     severity: Severity
     message: str
     recommendation: str | None
+    recommendation_source: Literal["RULES", "CLAUDE"] = "RULES"
     contributing_features: list[str]
     anomalous_samples: int
     sample_size: int
@@ -54,3 +56,4 @@ class ModelInfo(CamelModel):
     features: list[str]
     threshold: float
     trained_on: str
+    recommendation_engine: str
