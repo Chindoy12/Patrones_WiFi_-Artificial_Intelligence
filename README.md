@@ -5,7 +5,8 @@ peticiones del navegador y no accede a la base de datos; analiza exactamente los
 
 ## Tecnologías
 
-Python 3.13 · FastAPI · Pydantic v2 · NumPy · Pandas · scikit-learn (Isolation Forest) · joblib · Uvicorn · pytest
+Python 3.13 · FastAPI · Pydantic v2 · NumPy · Pandas · scikit-learn (Isolation Forest; LOF y One-Class SVM para
+comparar) · joblib · Uvicorn · pytest
 
 ## Estructura
 
@@ -14,7 +15,12 @@ app/main.py           endpoints, carga del modelo al arrancar, API key
 app/schemas.py        contrato de entrada/salida (JSON en camelCase)
 app/preprocessing.py  orden cronológico, imputación, transformación logarítmica, desviación robusta
 app/model_service.py  entrenamiento, persistencia, detección, severidad y explicación
-tests/                preprocesamiento, modelo y API
+app/diagnosis.py      causa probable de la anomalía (firmas de cada falla)
+app/scenarios.py      escenarios de fallas simuladas y etiquetadas para evaluar
+app/evaluation.py     comparación IF vs LOF vs One-Class SVM, ajuste y sensibilidad del umbral
+app/llm_advisor.py    recomendaciones opcionales con Claude
+docs/                 evaluacion_modelos.md: resultados y conclusiones
+tests/                preprocesamiento, modelo, diagnóstico, escenarios, evaluación y API
 ```
 
 ## Modelo
@@ -26,7 +32,10 @@ porque:
 - funciona bien con pocas variables numéricas y es rápido de entrenar y de consultar;
 - su puntaje normalizado `s(x) ∈ (0, 1)` es interpretable: cerca de 1 = anómalo.
 
-**Entrenamiento.** Al arrancar, si no existe el archivo de `AI_MODEL_PATH`, se entrena con una línea base
+**Hiperparámetros:** 200 árboles, cada uno con toda la línea base (`max_samples=1.0`), y contaminación de 2 %.
+Se eligieron en un conjunto de validación (ver *Evaluación*).
+
+**Entrenamiento.** Al arrancar, si no existe el archivo de `AI_MODEL_PATH` (o es de otra versión), se entrena con una línea base
 **sintética** de redes sanas (5 000 muestras generadas en `generate_baseline`) y se guarda con joblib. Es una
 decisión honesta y explícita: no hay datos reales etiquetados. `GET /api/v1/model` lo declara en `trainedOn`.
 
@@ -37,14 +46,45 @@ decisión honesta y explícita: no hay datos reales etiquetados. `GET /api/v1/mo
 devuelven en `imputedFeatures`), `log1p` sobre variables de cola larga.
 
 **Decisión.** Se evalúa la **última** medición de la ventana. Es anómala si el bosque la marca como outlier
-(contaminación 2 %). Severidad según la distancia al umbral: `LOW` < 0.04 ≤ `MEDIUM` < 0.10 ≤ `HIGH`.
-`contributingFeatures` lista las variables con desviación robusta > 2 en la dirección dañina (más latencia, menos
-señal…), y de ahí sale la recomendación.
+(contaminación 2 %). Severidad según la distancia al umbral: `LOW` < 0.08 ≤ `MEDIUM` < 0.17 ≤ `HIGH`.
+`featureDeviations` trae la desviación robusta de cada variable, con signo tal que positivo siempre es peor (más
+latencia, menos señal…); `contributingFeatures` lista las que pasan de 2.
+
+## Diagnóstico de la causa
+
+Isolation Forest dice *que* una medición es rara, no *por qué*. `app/diagnosis.py` compara las desviaciones con la
+firma de cada falla y devuelve `anomalyType`, `diagnosis` (explicación) y una recomendación concreta:
+
+| `anomalyType` | Firma |
+|---|---|
+| `CONGESTION` | más dispositivos y tráfico, con latencia y jitter altos |
+| `INTERFERENCE` | pérdida de paquetes y jitter altos con buena señal |
+| `WEAK_COVERAGE` | señal débil, menos ancho de banda y pérdidas |
+| `PROVIDER_ISSUE` | latencia alta y poco ancho de banda con la red local normal |
+| `SUSPICIOUS_TRAFFIC` | muchos más paquetes sin más dispositivos (escaneo, inundación, descarga masiva) |
+| `UNKNOWN` | ninguna firma coincide lo suficiente |
+
+## Evaluación
+
+`app/evaluation.py` compara **Isolation Forest**, **Local Outlier Factor** y **One-Class SVM** con los mismos datos:
+entrenan con la línea base sana y se prueban con 2 000 mediciones sanas y 500 con fallas simuladas de intensidad
+aleatoria (`app/scenarios.py`, otra semilla). Mide precisión, recall, F1, falsas alarmas, ROC-AUC, recall por tipo de
+falla y tiempos; además ajusta Isolation Forest en un conjunto de validación aparte, mide la sensibilidad del umbral
+y el acierto del diagnóstico. Resultados y conclusiones: [docs/evaluacion_modelos.md](docs/evaluacion_modelos.md).
+
+| Algoritmo | F1 | Falsas alarmas | ROC-AUC |
+|---|---|---|---|
+| **Isolation Forest** (producción) | 0,898 | 1,9 % | 0,978 |
+| Local Outlier Factor | 0,897 | 1,8 % | 0,977 |
+| One-Class SVM | 0,887 | 3,2 % | 0,977 |
+
+El servicio calcula el informe en segundo plano al arrancar (unos segundos) y lo entrega en
+`GET /api/v1/model/evaluation`; mientras tanto responde 503. Los datos son simulados y el informe lo dice.
 
 ## Recomendaciones con Claude (opcional)
 
 Si se define `ANTHROPIC_API_KEY`, después de la detección `ClaudeAdvisor` (`app/llm_advisor.py`) pide a Claude
-hasta 3 recomendaciones en español y reemplaza la recomendación por reglas. La respuesta indica el origen en
+hasta 3 recomendaciones en español (le envía también la causa probable del diagnóstico) y reemplaza la recomendación por reglas. La respuesta indica el origen en
 `recommendationSource` (`CLAUDE` o `RULES`).
 
 - Modelo por defecto: `claude-haiku-4-5-20251001` (cambiable con `CLAUDE_MODEL`).
@@ -58,6 +98,7 @@ hasta 3 recomendaciones en español y reemplaza la recomendación por reglas. La
 |---|---|---|
 | GET | `/health` | Estado del servicio (público) |
 | GET | `/api/v1/model` | Algoritmo, versión, variables, umbral y origen del entrenamiento |
+| GET | `/api/v1/model/evaluation` | Comparación de algoritmos, ajuste, sensibilidad y diagnóstico |
 | POST | `/api/v1/anomalies/detect` | Detecta anomalías en una ventana de mediciones |
 
 Si `AI_API_KEY` está definida, los endpoints `/api/v1/**` exigen la cabecera `X-API-Key`.
@@ -84,14 +125,18 @@ Entre 1 y 1 000 mediciones. `latency`, `jitter` y `packetLoss` son obligatorios;
   "anomalyDetected": true,
   "anomalyScore": 0.7103,
   "severity": "HIGH",
-  "message": "Comportamiento inusual detectado en: pérdida de paquetes, dispositivos conectados, jitter",
-  "recommendation": "Revisa interferencias de radio y retransmisiones; considera cambiar de canal. ...",
+  "anomalyType": "CONGESTION",
+  "diagnosis": "Causa probable: congestión de la red. Hay más dispositivos y tráfico de lo habitual, y la latencia sube con ellos.",
+  "message": "Posible congestión de la red: pérdida de paquetes, dispositivos conectados, jitter",
+  "recommendation": "Distribuye los clientes entre puntos de acceso, limita el ancho de banda por cliente o agrega capacidad en la zona.",
   "recommendationSource": "RULES",
   "contributingFeatures": ["packet_loss", "connected_devices", "jitter"],
+  "featureDeviations": { "latency": 1.8, "jitter": 3.1, "packet_loss": 9.6, "bandwidth": 0.9, "signal_strength": -0.2,
+                         "traffic_volume": 1.4, "connected_devices": 5.2, "packet_count": 0.1 },
   "anomalousSamples": 50,
   "sampleSize": 50,
   "imputedFeatures": [],
-  "modelVersion": "isolation-forest-1.0",
+  "modelVersion": "isolation-forest-1.1",
   "simulatedData": true
 }
 ```
@@ -105,7 +150,8 @@ pip install -r requirements.txt
 cp .env.example .env                       # AI_API_KEY igual a la del backend
 export $(grep -v '^#' .env | xargs)
 uvicorn app.main:app --port 8000
-pytest                                     # 19 pruebas
+pytest                                     # 48 pruebas
+python -m app.evaluation                   # imprime la evaluación en Markdown
 docker build -t wifisense-ai . && docker run -p 8000:8000 -e AI_API_KEY=... wifisense-ai
 ```
 
@@ -115,7 +161,7 @@ docker build -t wifisense-ai . && docker run -p 8000:8000 -e AI_API_KEY=... wifi
 tráfico por timestamp y llama a `POST /api/v1/anomalies/detect` mediante `AiAnalysisClient`. El backend guarda la
 respuesta en `ai_predictions`, actualiza el estado de la red y genera alertas si corresponde.
 
-## Pendiente (≈20 %)
+## Pendiente
 
-Reentrenamiento con mediciones reales acumuladas, ajuste de hiperparámetros, comparación con otros algoritmos
-(One-Class SVM, LOF, autoencoder) y explicaciones con SHAP.
+Reentrenamiento y evaluación con mediciones reales del agente, variables que separen la red local de internet,
+clasificador supervisado del tipo de falla para comparar con las firmas, y explicaciones con SHAP.
