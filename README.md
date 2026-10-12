@@ -18,8 +18,9 @@ app/model_service.py  entrenamiento, persistencia, detección, severidad y expli
 app/diagnosis.py      causa probable de la anomalía (firmas de cada falla)
 app/scenarios.py      escenarios de fallas simuladas y etiquetadas para evaluar
 app/evaluation.py     comparación IF vs LOF vs One-Class SVM, ajuste y sensibilidad del umbral
+app/quality.py        calidad de una conexión de 0 a 100 (curvas por métrica, actividades y consejos)
 app/llm_advisor.py    recomendaciones opcionales con Claude
-docs/                 evaluacion_modelos.md: resultados y conclusiones
+docs/                 evaluacion_modelos.md y modelo_calidad.md
 tests/                preprocesamiento, modelo, diagnóstico, escenarios, evaluación y API
 ```
 
@@ -81,6 +82,22 @@ y el acierto del diagnóstico. Resultados y conclusiones: [docs/evaluacion_model
 El servicio calcula el informe en segundo plano al arrancar (unos segundos) y lo entrega en
 `GET /api/v1/model/evaluation`; mientras tanto responde 503. Los datos son simulados y el informe lo dice.
 
+## Calidad de la conexión
+
+`POST /api/v1/quality/score` califica una prueba de conexión (la del usuario final en Mi Wi-Fi) o una medición de
+una red monitoreada. Cada métrica recibe un puntaje de 0 a 100 con una curva basada en lo que piden los servicios
+comunes; el total es el promedio ponderado, pero una métrica muy mala lo limita (puntaje de la peor + 30). Con la
+velocidad contratada, la bajada se juzga como porcentaje de lo contratado. La respuesta dice para qué alcanza la
+conexión (navegar, videollamadas, video HD y 4K, juegos en línea) y hasta dos consejos en español. Detalle de las
+curvas y sus fuentes: [docs/modelo_calidad.md](docs/modelo_calidad.md).
+
+| Puntaje | Calificación |
+|---|---|
+| 85–100 | `EXCELLENT` (Excelente) |
+| 70–84 | `GOOD` (Buena) |
+| 50–69 | `FAIR` (Regular) |
+| 0–49 | `POOR` (Mala) |
+
 ## Recomendaciones con Claude (opcional)
 
 Si se define `ANTHROPIC_API_KEY`, después de la detección `ClaudeAdvisor` (`app/llm_advisor.py`) pide a Claude
@@ -100,6 +117,7 @@ hasta 3 recomendaciones en español (le envía también la causa probable del di
 | GET | `/api/v1/model` | Algoritmo, versión, variables, umbral y origen del entrenamiento |
 | GET | `/api/v1/model/evaluation` | Comparación de algoritmos, ajuste, sensibilidad y diagnóstico |
 | POST | `/api/v1/anomalies/detect` | Detecta anomalías en una ventana de mediciones |
+| POST | `/api/v1/quality/score` | Calidad de 0 a 100 de una prueba o medición |
 
 Si `AI_API_KEY` está definida, los endpoints `/api/v1/**` exigen la cabecera `X-API-Key`.
 
@@ -150,7 +168,7 @@ pip install -r requirements.txt
 cp .env.example .env                       # AI_API_KEY igual a la del backend
 export $(grep -v '^#' .env | xargs)
 uvicorn app.main:app --port 8000
-pytest                                     # 48 pruebas
+pytest                                     # 65 pruebas
 python -m app.evaluation                   # imprime la evaluación en Markdown
 docker build -t wifisense-ai . && docker run -p 8000:8000 -e AI_API_KEY=... wifisense-ai
 ```
