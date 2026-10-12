@@ -1,28 +1,59 @@
 import logging
 import os
 import secrets
+import threading
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
 
+from app import evaluation, quality
 from app.llm_advisor import ClaudeAdvisor
 from app.model_service import AnomalyDetectionService
-from app.schemas import AnalysisRequest, AnalysisResponse, ModelInfo
+from app.schemas import AnalysisRequest, AnalysisResponse, EvaluationReport, ModelInfo
+from app.schemas_quality import QualityRequest, QualityResponse
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s - %(message)s")
 
 MODEL_PATH = os.getenv("AI_MODEL_PATH", "models/anomaly_model.joblib")
 API_KEY = os.getenv("AI_API_KEY")
+logger = logging.getLogger(__name__)
+
+
+class EvaluationRun:
+    """Runs the model comparison once in the background so startup and detection are never delayed."""
+
+    def __init__(self):
+        self.report: EvaluationReport | None = None
+        self.failed = False
+        self._done = threading.Event()
+
+    def start(self) -> "EvaluationRun":
+        threading.Thread(target=self._run, name="model-evaluation", daemon=True).start()
+        return self
+
+    def wait(self, timeout: float) -> bool:
+        return self._done.wait(timeout)
+
+    def _run(self) -> None:
+        try:
+            self.report = evaluation.evaluate()
+            logger.info("Model evaluation ready")
+        except Exception:  # the comparison is informative; detection keeps working without it
+            logger.exception("Model evaluation failed")
+            self.failed = True
+        finally:
+            self._done.set()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     app.state.detector = AnomalyDetectionService.load_or_train(MODEL_PATH)
     app.state.advisor = ClaudeAdvisor.from_env()
+    app.state.evaluation = EvaluationRun().start()
     yield
 
 
-app = FastAPI(title="WiFiSense AI", version="1.1.0", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
+app = FastAPI(title="WiFiSense AI", version="1.2.0", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
 
 
 def verify_api_key(x_api_key: str | None = Header(default=None)) -> None:
@@ -51,6 +82,17 @@ def model_info(service: AnomalyDetectionService = Depends(detector),
     return service.info(claude.model if claude else "reglas")
 
 
+@app.get("/api/v1/model/evaluation", response_model=EvaluationReport, response_model_by_alias=True,
+         dependencies=[Depends(verify_api_key)])
+def model_evaluation(request: Request) -> EvaluationReport:
+    run: EvaluationRun = request.app.state.evaluation
+    if run.report is None:
+        detail = ("La evaluación del modelo no está disponible." if run.failed
+                  else "La evaluación del modelo está en curso. Intenta de nuevo en unos segundos.")
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=detail)
+    return run.report
+
+
 @app.post("/api/v1/anomalies/detect", response_model=AnalysisResponse, response_model_by_alias=True,
           dependencies=[Depends(verify_api_key)])
 def detect_anomalies(payload: AnalysisRequest,
@@ -58,3 +100,10 @@ def detect_anomalies(payload: AnalysisRequest,
                      claude: ClaudeAdvisor | None = Depends(advisor)) -> AnalysisResponse:
     result = service.detect(payload)
     return claude.enrich(result, payload) if claude else result
+
+
+@app.post("/api/v1/quality/score", response_model=QualityResponse, response_model_by_alias=True,
+          dependencies=[Depends(verify_api_key)])
+def quality_score(payload: QualityRequest) -> QualityResponse:
+    """0-100 quality of one connection test or measurement, with what it is good for and what to improve."""
+    return quality.score(payload)
