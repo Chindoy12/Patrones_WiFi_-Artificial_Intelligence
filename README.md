@@ -19,9 +19,11 @@ app/diagnosis.py      causa probable de la anomalía (firmas de cada falla)
 app/scenarios.py      escenarios de fallas simuladas y etiquetadas para evaluar
 app/evaluation.py     comparación IF vs LOF vs One-Class SVM, ajuste y sensibilidad del umbral
 app/quality.py        calidad de una conexión de 0 a 100 (curvas por métrica, actividades y consejos)
+app/security.py       auditoría de seguridad de la red del usuario (cifrado, puertos del router, equipos nuevos)
 app/llm_advisor.py    recomendaciones opcionales con Claude
-docs/                 evaluacion_modelos.md y modelo_calidad.md
-tests/                preprocesamiento, modelo, diagnóstico, escenarios, evaluación y API
+docs/                 evaluacion_modelos.md, modelo_calidad.md y auditoria_seguridad.md
+tests/                preprocesamiento, modelo, diagnóstico, escenarios, evaluación, seguridad, agente y API
+agent/                agente WiFiSense que corre en la casa del usuario (ver agent/README.md)
 ```
 
 ## Modelo
@@ -98,6 +100,20 @@ curvas y sus fuentes: [docs/modelo_calidad.md](docs/modelo_calidad.md).
 | 50–69 | `FAIR` (Regular) |
 | 0–49 | `POOR` (Mala) |
 
+## Auditoría de seguridad
+
+`POST /api/v1/security/assess` revisa lo que el agente WiFiSense vio en la red del usuario: tipo de cifrado del
+Wi-Fi, puertos abiertos en el router, dispositivos nuevos, banda y saturación del canal. Cada hallazgo resta puntos
+y trae qué significa y qué hacer, en español. Un hallazgo crítico (red abierta, WEP) deja el puntaje en 39 o menos y
+uno alto (WPA/TKIP, Telnet, SMB) en 64 o menos. Reglas completas: [docs/auditoria_seguridad.md](docs/auditoria_seguridad.md).
+
+| Puntaje | Calificación |
+|---|---|
+| 85–100 | `SECURE` (Segura) |
+| 65–84 | `ACCEPTABLE` (Aceptable) |
+| 40–64 | `AT_RISK` (En riesgo) |
+| 0–39 | `CRITICAL` (Crítica) |
+
 ## Recomendaciones con Claude (opcional)
 
 Si se define `ANTHROPIC_API_KEY`, después de la detección `ClaudeAdvisor` (`app/llm_advisor.py`) pide a Claude
@@ -118,6 +134,7 @@ hasta 3 recomendaciones en español (le envía también la causa probable del di
 | GET | `/api/v1/model/evaluation` | Comparación de algoritmos, ajuste, sensibilidad y diagnóstico |
 | POST | `/api/v1/anomalies/detect` | Detecta anomalías en una ventana de mediciones |
 | POST | `/api/v1/quality/score` | Calidad de 0 a 100 de una prueba o medición |
+| POST | `/api/v1/security/assess` | Auditoría de seguridad de 0 a 100 con hallazgos y acciones |
 
 Si `AI_API_KEY` está definida, los endpoints `/api/v1/**` exigen la cabecera `X-API-Key`.
 
