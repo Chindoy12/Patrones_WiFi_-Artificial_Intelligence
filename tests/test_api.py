@@ -64,3 +64,28 @@ def test_normal_window_has_no_diagnosis(client):
     assert body["diagnosis"] is None
     assert body["simulatedData"] is False
 
+
+
+class CountingAdvisor:
+    def __init__(self):
+        self.calls = 0
+
+    def enrich(self, result, request):
+        self.calls += 1
+        return result.model_copy(update={"recommendation": "Claude", "recommendation_source": "CLAUDE"})
+
+
+def test_claude_is_only_asked_when_there_is_an_anomaly(client):
+    advisor = CountingAdvisor()
+    previous, client.app.state.advisor = client.app.state.advisor, advisor
+    try:
+        normal = client.post("/api/v1/anomalies/detect",
+                             json={"networkId": 1, "simulatedData": False, "measurements": [NORMAL]}).json()
+        degraded = client.post("/api/v1/anomalies/detect",
+                               json={"networkId": 1, "simulatedData": False, "measurements": [NORMAL, DEGRADED]}).json()
+    finally:
+        client.app.state.advisor = previous
+
+    assert normal["recommendationSource"] == "RULES"
+    assert degraded["recommendationSource"] == "CLAUDE"
+    assert advisor.calls == 1

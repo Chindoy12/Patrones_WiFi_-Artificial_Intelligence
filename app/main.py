@@ -6,11 +6,12 @@ from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
 
-from app import evaluation, quality
+from app import evaluation, quality, security
 from app.llm_advisor import ClaudeAdvisor
 from app.model_service import AnomalyDetectionService
 from app.schemas import AnalysisRequest, AnalysisResponse, EvaluationReport, ModelInfo
 from app.schemas_quality import QualityRequest, QualityResponse
+from app.schemas_security import SecurityRequest, SecurityResponse
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s - %(message)s")
 
@@ -99,7 +100,9 @@ def detect_anomalies(payload: AnalysisRequest,
                      service: AnomalyDetectionService = Depends(detector),
                      claude: ClaudeAdvisor | None = Depends(advisor)) -> AnalysisResponse:
     result = service.detect(payload)
-    return claude.enrich(result, payload) if claude else result
+    # Claude is only asked when there is something to explain: the agent reports every few minutes and a normal
+    # result already has nothing to recommend, so this keeps the API cost (and latency) proportional to problems.
+    return claude.enrich(result, payload) if claude and result.anomaly_detected else result
 
 
 @app.post("/api/v1/quality/score", response_model=QualityResponse, response_model_by_alias=True,
@@ -107,3 +110,10 @@ def detect_anomalies(payload: AnalysisRequest,
 def quality_score(payload: QualityRequest) -> QualityResponse:
     """0-100 quality of one connection test or measurement, with what it is good for and what to improve."""
     return quality.score(payload)
+
+
+@app.post("/api/v1/security/assess", response_model=SecurityResponse, response_model_by_alias=True,
+          dependencies=[Depends(verify_api_key)])
+def security_assess(payload: SecurityRequest) -> SecurityResponse:
+    """0-100 security audit of a home network from what the agent saw: encryption, router ports, new devices."""
+    return security.assess(payload)
