@@ -4,6 +4,7 @@ import statistics
 
 import anthropic
 
+from app.diagnosis import LABELS
 from app.model_service import FEATURE_LABELS
 from app.preprocessing import FEATURES
 from app.schemas import AnalysisRequest, AnalysisResponse
@@ -15,7 +16,8 @@ MAX_RECOMMENDATION_CHARS = 1500
 
 SYSTEM_PROMPT = (
     "Eres un ingeniero experto en redes Wi-Fi que apoya al equipo de TI de una universidad. "
-    "Recibes métricas de una red y el veredicto de un modelo Isolation Forest. "
+    "Recibes métricas de una red, el veredicto de un modelo Isolation Forest y la causa probable que indican "
+    "las reglas de diagnóstico; si los datos contradicen esa causa, dilo. "
     "Responde en español, en texto plano sin markdown, con máximo 3 recomendaciones concretas y numeradas "
     "(una línea cada una), basadas solo en los datos recibidos. "
     "Si la red está normal, sugiere qué vigilar. Si los datos son simulados, menciónalo en una frase final."
@@ -79,6 +81,7 @@ def build_prompt(result: AnalysisResponse, request: AnalysisRequest) -> str:
         f"Anomalía detectada: {'sí' if result.anomaly_detected else 'no'}",
         f"Puntaje de anomalía (0-1): {result.anomaly_score}",
         f"Severidad: {result.severity.value}",
+        f"Causa probable según el diagnóstico: {LABELS[result.anomaly_type]}",
         f"Variables que más se desvían: {contributors}",
         f"Datos simulados: {'sí' if request.simulated_data else 'no'}",
     ]

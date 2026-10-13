@@ -72,3 +72,9 @@ def test_advisor_is_disabled_without_api_key(monkeypatch):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
 
     assert ClaudeAdvisor.from_env() is None
+
+
+def test_prompt_includes_the_probable_cause(detection):
+    prompt = build_prompt(*detection)
+
+    assert "Causa probable según el diagnóstico: cobertura débil" in prompt
