@@ -23,7 +23,8 @@ app/security.py       auditoría de seguridad de la red del usuario (cifrado, pu
 app/llm_advisor.py    recomendaciones opcionales con Claude
 docs/                 evaluacion_modelos.md, modelo_calidad.md y auditoria_seguridad.md
 tests/                preprocesamiento, modelo, diagnóstico, escenarios, evaluación, seguridad, agente y API
-agent/                agente WiFiSense que corre en la casa del usuario (ver agent/README.md)
+agent/                agente WiFiSense que corre en la casa del usuario e instalador para Windows (ver agent/README.md)
+.github/workflows/    construcción del instalador WiFiSenseAgente.exe
 ```
 
 ## Modelo
