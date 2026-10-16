@@ -4,21 +4,44 @@ Programa que corre en un computador de tu casa, mide la red Wi-Fi y envía un re
 Con esos reportes la IA te dice **cuántos equipos están conectados**, si apareció uno nuevo, qué tan segura es tu red
 (auditoría de seguridad) y si hay anomalías en la conexión.
 
+## Instalación en Windows (sin Python)
+
+1. En WiFiSense entra a **Mi Wi-Fi → Agente WiFiSense → Instalar agente**. La página muestra un código de 8
+   caracteres (sirve 15 minutos y una sola vez) y el botón **Descargar instalador**.
+2. Abre `WiFiSenseAgente.exe`. Como es un programa nuevo sin firma digital, Windows puede mostrar «Windows protegió
+   su PC»: pulsa **Más información → Ejecutar de todas formas**.
+3. La ventana explica qué hace el agente. Escribe el código, deja marcada (o no) la opción de iniciar con Windows y
+   pulsa **Instalar**. En segundos aparecen los datos en Mi Wi-Fi.
+
+Qué queda en el computador, todo a la vista y para el usuario actual (no pide permisos de administrador):
+
+| Dónde | Qué |
+|---|---|
+| `%LOCALAPPDATA%\Programs\WiFiSense\WiFiSenseAgente.exe` | El programa |
+| `%APPDATA%\WiFiSense\agent.json` | La clave del agente y la sal de las huellas (solo para tu usuario) |
+| `%LOCALAPPDATA%\WiFiSense\agente.log` | Lo que hace el agente en segundo plano (máximo 1 MB) |
+| Administrador de tareas → Aplicaciones de inicio | «WiFiSenseAgente», si elegiste iniciar con Windows (se puede desactivar ahí) |
+| Configuración → Aplicaciones → Aplicaciones instaladas | «Agente WiFiSense» con **Desinstalar**, que borra todo lo anterior |
+
+El instalador se construye en GitHub Actions (`.github/workflows/agente-windows.yml`, PyInstaller) cada vez que
+cambia la carpeta `agent/` en `main`, y se publica en la versión `agente` del repositorio.
+
+## Uso con Python (Windows o Linux)
+
 Solo necesita **Python 3.9 o superior** (en Windows: Microsoft Store → "Python 3.12"). No instala nada más.
 
-## Uso
-
-1. En WiFiSense entra a **Mi Wi-Fi → Agente** y pulsa **Crear clave**. Cópiala: solo se muestra una vez.
-2. Descarga `wifisense_agent.py` desde esa misma pantalla.
+1. En WiFiSense entra a **Mi Wi-Fi → Agente WiFiSense → Instalar agente** y anota el código.
+2. Descarga `wifisense_agent.py` (opción «Usar con Python» de esa pantalla).
 3. En CMD, en la carpeta donde lo descargaste:
 
 ```cmd
-python wifisense_agent.py setup
+python wifisense_agent.py pair K7QM-4RZD
 python wifisense_agent.py scan
 python wifisense_agent.py run
 ```
 
-`setup` pide la clave sin mostrarla y la guarda solo para tu usuario (`%APPDATA%\WiFiSense\agent.json` en Windows,
+`pair` cambia el código por la clave del agente y la guarda. También sigue funcionando `setup`, que pide la clave
+larga (Mi Wi-Fi → Crear clave) sin mostrarla y la guarda solo para tu usuario (`%APPDATA%\WiFiSense\agent.json` en Windows,
 `~/.config/WiFiSense/agent.json` en Linux). `scan` mide y muestra exactamente lo que se enviaría, sin enviar nada.
 `run` envía un reporte cada 5 minutos hasta que pulses Ctrl + C (`run --once` envía uno solo).
 
