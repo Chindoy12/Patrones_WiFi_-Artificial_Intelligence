@@ -3,6 +3,7 @@
 
 Solo usa la biblioteca estándar de Python 3.9 o superior (no hay que instalar nada) y funciona en Windows y Linux.
 
+    python wifisense_agent.py pair CODIGO  conecta el agente con el código de Mi Wi-Fi > Instalar agente
     python wifisense_agent.py setup        guarda la clave del agente (se crea en Mi Wi-Fi > Agente)
     python wifisense_agent.py scan         muestra lo que mediría, sin enviar nada
     python wifisense_agent.py run          envía un reporte cada 5 minutos (Ctrl + C para detener)
@@ -41,9 +42,10 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Callable, Optional
 
-AGENT_VERSION = "1.0.0"
+AGENT_VERSION = "1.1.0"
 DEFAULT_SERVER = "https://patroneswifibackend-production.up.railway.app"
 REPORT_PATH = "/api/agent/reports"
+PAIR_PATH = "/api/agent/pair"
 DEFAULT_INTERVAL = 300
 MIN_INTERVAL = 60
 ROUTER_PORTS = (21, 22, 23, 53, 80, 443, 445, 1900, 7547, 8080, 8443)
@@ -149,6 +151,20 @@ def authentication_of(auth: str, cipher: str = "") -> str:
     return "UNKNOWN"
 
 
+CIPHERS = (("GCMP-256", "GCMP-256"), ("GCMP", "GCMP"), ("CCMP", "CCMP"), ("AES", "CCMP"), ("TKIP", "TKIP"),
+           ("WEP", "WEP"), ("NINGUN", "NONE"), ("NONE", "NONE"))
+
+
+def cipher_of(text: str) -> Optional[str]:
+    """Nombre corto del cifrado. Algunas versiones de Windows escriben una descripción larga (por ejemplo varios
+    cifrados o el nombre del proveedor); el servidor solo acepta hasta 20 caracteres."""
+    upper = (text or "").upper()
+    for token, name in CIPHERS:
+        if token in upper:
+            return name
+    return (text or "").strip()[:20] or None
+
+
 def band_of(band_text: str, channel: Optional[int]) -> Optional[str]:
     number = first_number(band_text or "")
     if number is not None:
@@ -179,9 +195,9 @@ def parse_netsh_interfaces(text: str) -> dict:
     signal_pct = first_number(block.get("signal", ""))
     rssi = first_number(block.get("rssi", ""))
     return {
-        "ssid": block["ssid"],
+        "ssid": block["ssid"][:64],
         "authentication": authentication_of(block.get("authentication", ""), block.get("cipher", "")),
-        "cipher": block.get("cipher") or None,
+        "cipher": cipher_of(block.get("cipher", "")),
         "signalPercent": int(signal_pct) if signal_pct is not None else None,
         "signalDbm": int(rssi) if rssi is not None else (int(signal_pct / 2 - 100) if signal_pct is not None else None),
         "channel": int(channel) if channel else None,
@@ -525,6 +541,24 @@ class SendError(Exception):
         self.fatal = fatal
 
 
+def server_detail(error: urllib.error.HTTPError) -> str:
+    """El motivo que da el servidor (y el campo rechazado, si lo hay), para saber qué corregir."""
+    try:
+        problem = json.loads(error.read() or b"{}")
+    except (OSError, ValueError):
+        return ""
+    if not isinstance(problem, dict):
+        return ""
+    parts = [str(problem.get("detail") or "").strip()]
+    errors = problem.get("errors")
+    if isinstance(errors, dict):
+        parts += [f"{field}: {message}" for field, message in errors.items()]
+    elif isinstance(errors, list):
+        parts += [str(message) for message in errors]
+    text = " | ".join(part for part in parts if part)
+    return f": {text[:300]}" if text else ""
+
+
 def send(report: dict, server: str, key: str, opener=urllib.request.urlopen) -> dict:
     request = urllib.request.Request(
         validate_server(server) + REPORT_PATH, data=json.dumps(report).encode(), method="POST",
@@ -540,9 +574,52 @@ def send(report: dict, server: str, key: str, opener=urllib.request.urlopen) -> 
         if error.code == 429:
             retry = error.headers.get("Retry-After") if error.headers else None
             raise SendError("demasiados reportes seguidos", retry_after=int(retry) if retry and retry.isdigit() else 60)
-        raise SendError(f"el servidor respondió {error.code}")
+        raise SendError(f"el servidor respondió {error.code}{server_detail(error)}")
     except (urllib.error.URLError, OSError) as error:
         raise SendError(f"no se pudo conectar con el servidor ({getattr(error, 'reason', error)})")
+
+
+CODE_PATTERN = re.compile(r"^[A-HJKMNP-Z2-9]{8}$")
+
+
+def normalize_code(text: str) -> Optional[str]:
+    """'k7qm 4rzd' o 'K7QM-4RZD' -> 'K7QM-4RZD'; None si no puede ser un código."""
+    code = re.sub(r"[\s-]", "", text or "").upper()
+    return f"{code[:4]}-{code[4:]}" if CODE_PATTERN.match(code) else None
+
+
+def pair(code: str, server: str, opener=urllib.request.urlopen) -> dict:
+    """Cambia el código corto de Mi Wi-Fi por la clave del agente. Devuelve {key, prefix, networkName}."""
+    normalized = normalize_code(code)
+    if not normalized:
+        raise SendError("el código tiene 8 letras y números, por ejemplo K7QM-4RZD", fatal=True)
+    request = urllib.request.Request(
+        validate_server(server) + PAIR_PATH, data=json.dumps({"code": normalized}).encode(), method="POST",
+        headers={"Content-Type": "application/json", "User-Agent": f"WiFiSense-Agent/{AGENT_VERSION}"})
+    try:
+        with opener(request, timeout=30) as response:
+            answer = json.loads(response.read() or b"{}")
+    except urllib.error.HTTPError as error:
+        if error.code == 429:
+            raise SendError("demasiados intentos; espera unos minutos", retry_after=600)
+        raise SendError(f"el servidor respondió {error.code}{server_detail(error)}", fatal=error.code == 400)
+    except (urllib.error.URLError, OSError) as error:
+        raise SendError(f"no se pudo conectar con el servidor ({getattr(error, 'reason', error)})")
+    if not KEY_PATTERN.match(str(answer.get("key", ""))):
+        raise SendError("el servidor no devolvió una clave válida")
+    return answer
+
+
+def save_pairing(answer: dict, server: str, path: Optional[Path] = None) -> Path:
+    """Guarda la clave recibida (y una sal nueva si no había) solo para el usuario actual."""
+    path = path or config_path()
+    try:
+        config = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        config = {}
+    config.update(server=validate_server(server), key=answer["key"], network=answer.get("networkName"))
+    config.setdefault("salt", secrets.token_hex(16))
+    return save_config(config, path)
 
 
 # ---------------------------------------------------------------------------------------------- línea de comandos
@@ -577,6 +654,19 @@ def command_setup(_args) -> int:
     config.update(server=server, key=key)
     config.setdefault("salt", secrets.token_hex(16))
     print(f"Guardado en {save_config(config)}")
+    print("Ahora ejecuta: python wifisense_agent.py run")
+    return 0
+
+
+def command_pair(args) -> int:
+    config = load_config()
+    code = args.code or input("Código de instalación (Mi Wi-Fi > Agente WiFiSense > Instalar agente): ")
+    try:
+        answer = pair(code, config["server"])
+    except SendError as error:
+        print(f"Error: {error}")
+        return 1
+    print(f"Conectado con la red «{answer.get('networkName', '')}». Guardado en {save_pairing(answer, config['server'])}")
     print("Ahora ejecuta: python wifisense_agent.py run")
     return 0
 
@@ -632,6 +722,9 @@ def command_run(args) -> int:
 def main(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="Agente WiFiSense: mide tu red Wi-Fi y la envía a WiFiSense.")
     commands = parser.add_subparsers(dest="command", required=True)
+    pair_parser = commands.add_parser("pair", help="conectar con el código de Mi Wi-Fi")
+    pair_parser.add_argument("code", nargs="?", help="código de 8 caracteres, por ejemplo K7QM-4RZD")
+    pair_parser.set_defaults(handler=command_pair)
     commands.add_parser("setup", help="guardar la clave del agente").set_defaults(handler=command_setup)
     commands.add_parser("scan", help="medir y mostrar sin enviar").set_defaults(handler=command_scan)
     run = commands.add_parser("run", help="medir y enviar periódicamente")

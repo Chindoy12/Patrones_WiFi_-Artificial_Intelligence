@@ -274,3 +274,25 @@ def test_salt_is_saved_without_writing_the_key_from_the_environment(tmp_path, mo
     stored = json.loads(path.read_text(encoding="utf-8"))
     assert stored == {"salt": salt}
     assert agent.ensure_salt(agent.load_config(path), path) == salt
+
+
+def test_send_shows_why_the_server_rejected_the_report():
+    body = io.BytesIO(json.dumps({"detail": "Revisa los datos ingresados.",
+                                  "errors": {"neighborsTotal": "debe ser menor que o igual a 500"}}).encode())
+
+    def opener(request, timeout):
+        raise urllib.error.HTTPError(request.full_url, 400, "Bad Request", {}, body)
+
+    with pytest.raises(agent.SendError) as error:
+        agent.send({}, "https://wifisense.example.com", "wsa_" + "x" * 43, opener=opener)
+    assert str(error.value) == ("el servidor respondió 400: Revisa los datos ingresados. | "
+                                "neighborsTotal: debe ser menor que o igual a 500")
+
+
+@pytest.mark.parametrize("text, expected", [
+    ("CCMP", "CCMP"), ("GCMP-256", "GCMP-256"), ("TKIP", "TKIP"), ("Ninguno", "NONE"), ("", None),
+    ("CCMP (cifrado de grupo: TKIP) Microsoft", "CCMP"), ("Algo desconocido y muy largo del fabricante", "Algo desconocido y m"),
+])
+def test_cipher_is_always_short(text, expected):
+    assert agent.cipher_of(text) == expected
+    assert expected is None or len(agent.cipher_of(text)) <= 20
