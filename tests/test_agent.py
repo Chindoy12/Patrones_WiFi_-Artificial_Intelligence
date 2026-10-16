@@ -191,13 +191,64 @@ def test_measure_uses_the_probe(monkeypatch):
 def test_report_leaves_out_what_could_not_be_measured():
     report = agent.build_report({"ssid": "Casa", "authentication": "WPA2", "channel": 6},
                                 {"latencyMs": 20.0, "jitterMs": 2.0, "packetLossPct": 0.0}, None,
-                                ["a" * 24, "b" * 24], [80, 443])
+                                [{"id": "a" * 24, "vendor": "Apple", "name": "iPhone"}, {"id": "b" * 24}], [80, 443])
 
     assert report["deviceCount"] == 2
+    assert report["deviceHashes"] == ["a" * 24, "b" * 24]
+    assert report["devices"] == [{"id": "a" * 24, "vendor": "Apple", "name": "iPhone"}, {"id": "b" * 24}]
     assert report["openPorts"] == [80, 443]
     assert "gatewayLatencyMs" not in report
     assert "signalDbm" not in report
     assert report["agentVersion"] == agent.AGENT_VERSION
+
+
+@pytest.mark.parametrize("mac, vendor", [
+    ("FC:FB:FB:11:22:33", "Apple"), ("ec:fa:bc:00:11:22", "Samsung"), ("b8-27-eb-aa-bb-cc", "Raspberry Pi"),
+    ("5c:62:8b:00:00:01", "TP-Link"), ("00:11:22:33:44:55", None),
+])
+def test_vendor_comes_from_the_mac_oui(mac, vendor):
+    assert agent.vendor_of(mac) == vendor
+
+
+def test_devices_carry_a_fingerprint_vendor_and_name(monkeypatch):
+    monkeypatch.setattr(agent, "wake_neighbors", lambda ip: None)
+    monkeypatch.setattr(agent.time, "sleep", lambda _s: None)
+    monkeypatch.setattr(agent, "IS_WINDOWS", False)
+    monkeypatch.setattr(agent, "read_file", lambda _p: (
+        "IP address       HW type     Flags       HW address            Mask     Device\n"
+        "192.168.1.5      0x1         0x2         fc:fb:fb:11:22:33     *        wlan0\n"
+        "192.168.1.9      0x1         0x2         00:11:22:33:44:55     *        wlan0\n"))
+    monkeypatch.setattr(agent, "own_mac", lambda: None)
+    monkeypatch.setattr(agent, "hostname_of", lambda ip: {"192.168.1.5": "iPhone-de-Ana"}.get(ip))
+
+    found = agent.devices("192.168.1.2", "sal", wait=0)
+
+    by_vendor = {d.get("vendor"): d for d in found}
+    assert len(found) == 2
+    assert by_vendor["Apple"]["id"] == agent.mac_fingerprint("fc:fb:fb:11:22:33", "sal")
+    assert by_vendor["Apple"]["name"] == "iPhone-de-Ana"
+    assert None in by_vendor  # el equipo sin OUI conocido no lleva fabricante
+    assert "name" not in by_vendor[None]  # tampoco nombre si nadie respondió
+    assert all("fc:fb:fb" not in device["id"] for device in found)  # la MAC nunca viaja
+
+
+@pytest.mark.parametrize("raw, ip, expected", [
+    ("iPhone-de-Ana.lan", "192.168.1.5", "iPhone-de-Ana"), ("PC-SALA.local.", "192.168.1.6", "PC-SALA"),
+    ("galaxy-s21", "192.168.1.7", "galaxy-s21"), ("192.168.1.8", "192.168.1.8", None),
+    ("", "192.168.1.9", None), (None, "192.168.1.9", None),
+])
+def test_clean_hostname(raw, ip, expected):
+    assert agent.clean_hostname(raw, ip) == expected
+
+
+def test_netbios_name_reads_the_unique_entry(monkeypatch):
+    output = (
+        "Nombre            Tipo         Estado\n"
+        "---------------------------------------------\n"
+        "LAPTOP-ANA     <00>  UNIQUE      Registrado\n"
+        "GRUPO_TRABAJO  <00>  GROUP       Registrado\n")
+    monkeypatch.setattr(agent, "run_command", lambda *a, **k: output)
+    assert agent.netbios_name("192.168.1.5") == "LAPTOP-ANA"
 
 
 @pytest.mark.parametrize("url, ok", [

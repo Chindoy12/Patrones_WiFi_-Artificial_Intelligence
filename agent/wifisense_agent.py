@@ -13,8 +13,9 @@ Qué mide y qué envía:
   * Datos del Wi-Fi que muestra el sistema (nombre, tipo de seguridad, señal, canal, banda) y cuántas redes vecinas
     usan el mismo canal.
   * Latencia, variación (jitter) y pérdida hacia internet y hacia el router.
-  * Cuántos equipos hay conectados. Las direcciones MAC NO salen de tu computador: se envía una huella SHA-256 con
-    una sal aleatoria propia de esta instalación, que sirve para saber si aparece un equipo nuevo y nada más.
+  * Cuántos equipos hay conectados y, de cada uno, el fabricante (según la MAC) y el nombre que anuncia en la red,
+    para que los reconozcas como en el Bluetooth. Las direcciones MAC NO salen de tu computador: se envía una huella
+    SHA-256 con una sal aleatoria propia de esta instalación.
   * Qué puertos de administración del router aceptan conexiones (solo se intenta conectar, no se envían datos).
 """
 from __future__ import annotations
@@ -42,7 +43,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Callable, Optional
 
-AGENT_VERSION = "1.1.0"
+AGENT_VERSION = "1.2.0"
 DEFAULT_SERVER = "https://patroneswifibackend-production.up.railway.app"
 REPORT_PATH = "/api/agent/reports"
 PAIR_PATH = "/api/agent/pair"
@@ -357,6 +358,82 @@ def wake_neighbors(own_ip: str) -> None:
                 pass
 
 
+# Fabricante según los primeros 3 bytes de la MAC (el OUI, que la IEEE asigna a cada fabricante). Sirve para que el
+# usuario reconozca «un equipo Apple» o «un equipo Samsung» sin que la MAC salga del computador. Es una lista de los
+# fabricantes más comunes en una casa; si el OUI no está, no se envía fabricante (queda "equipo sin identificar").
+OUI_VENDORS = {
+    "fcfbfb": "Apple", "a4c361": "Apple", "d0817a": "Apple", "f0d1a9": "Apple", "3c0754": "Apple", "a85c2c": "Apple",
+    "ac1f74": "Apple", "88665a": "Apple", "f4f15a": "Apple", "9027e4": "Apple", "e0accb": "Apple", "dca904": "Apple",
+    "ecfabc": "Samsung", "8425db": "Samsung", "f409d8": "Samsung", "5001bb": "Samsung", "bc1485": "Samsung",
+    "e8508b": "Samsung", "a02bb8": "Samsung", "34231f": "Samsung", "c87e75": "Samsung", "d0667b": "Samsung",
+    "f8a9d0": "LG", "d013fd": "LG", "a816b2": "LG", "00e091": "LG",
+    "3c5ab4": "Google", "f4f5e8": "Google", "1c53f9": "Google", "d8eb97": "Google", "48d6d5": "Google",
+    "fc65de": "Amazon", "44650d": "Amazon", "68543d": "Amazon", "ac63be": "Amazon", "f0272d": "Amazon",
+    "286c07": "Xiaomi", "64b473": "Xiaomi", "f8a2d6": "Xiaomi", "acc1ee": "Xiaomi", "2082c0": "Xiaomi",
+    "48e1e9": "Huawei", "70723c": "Huawei", "e8089f": "Huawei", "c40528": "Huawei", "00e0fc": "Huawei",
+    "5c628b": "TP-Link", "f4ec38": "TP-Link", "c006c3": "TP-Link", "503eaa": "TP-Link", "d80d17": "TP-Link",
+    "ec086b": "TP-Link", "a42bb0": "TP-Link",
+    "b827eb": "Raspberry Pi", "dca632": "Raspberry Pi", "e45f01": "Raspberry Pi",
+    "001a11": "Intel", "3c970e": "Intel", "7c7a91": "Intel", "e4a471": "Intel", "a0a8cd": "Intel", "9cb6d0": "Intel",
+    "000c29": "VMware", "005056": "VMware", "080027": "VirtualBox",
+    "d8bbc1": "Microsoft", "c83f26": "Sony", "e89309": "Sony", "001315": "Nintendo", "e84e06": "Realtek",
+    "70b3d5": "Cámara IP", "001788": "Philips Hue", "ecb5fa": "Philips Hue",
+}
+
+
+def vendor_of(mac: str) -> Optional[str]:
+    """Fabricante del equipo según el OUI de su MAC, o None si no está en la lista."""
+    oui = mac.lower().replace(":", "").replace("-", "")[:6]
+    return OUI_VENDORS.get(oui)
+
+
+# Sufijos que el router o el sistema le agregan al nombre y que no aportan nada al usuario.
+NAME_SUFFIXES = (".lan", ".home", ".local", ".localdomain", ".home.arpa", ".gateway")
+
+
+def clean_hostname(raw: Optional[str], ip: str) -> Optional[str]:
+    """Deja el nombre del equipo legible ('iPhone-de-Ana'), o None si el sistema solo devolvió la IP o algo vacío."""
+    if not raw:
+        return None
+    name = raw.strip().rstrip(".")
+    lowered = name.lower()
+    for suffix in NAME_SUFFIXES:
+        if lowered.endswith(suffix):
+            name = name[: -len(suffix)]
+            break
+    # Un nombre que es la propia IP (DNS inverso que devuelve la dirección) no dice nada.
+    if not name or name == ip or re.fullmatch(r"[0-9.]+", name):
+        return None
+    return name[:63]
+
+
+def hostname_of(ip: str, timeout: float = 1.0) -> Optional[str]:
+    """Nombre que anuncia el equipo en la red (como lo muestran el Bluetooth o la zona Wi-Fi del celular). Se intenta
+    por DNS inverso y, en Windows, por NetBIOS; si nadie responde a tiempo, queda sin nombre."""
+    previous = socket.getdefaulttimeout()
+    socket.setdefaulttimeout(timeout)
+    try:
+        name = clean_hostname(socket.gethostbyaddr(ip)[0], ip)
+        if name:
+            return name
+    except (OSError, UnicodeError):
+        pass
+    finally:
+        socket.setdefaulttimeout(previous)
+    if IS_WINDOWS:
+        return netbios_name(ip)
+    return None
+
+
+def netbios_name(ip: str) -> Optional[str]:
+    """Nombre NetBIOS en Windows ('nbtstat -A ip'): la primera entrada <20> o <00> de tipo UNIQUE es el del equipo."""
+    for line in run_command(["nbtstat", "-A", ip], timeout=3).splitlines():
+        match = re.match(r"\s*(\S.*?)\s+<(00|20)>\s+UNIQUE", line)
+        if match:
+            return clean_hostname(match.group(1), ip)
+    return None
+
+
 def mac_fingerprint(mac: str, salt: str) -> str:
     return hashlib.sha256(f"{salt}:{mac.lower()}".encode()).hexdigest()[:24]
 
@@ -369,18 +446,34 @@ def own_mac() -> Optional[str]:
     return ":".join(f"{node >> shift & 0xff:02x}" for shift in range(40, -1, -8))
 
 
-def devices(own_ip: Optional[str], salt: str, wait: float = 2.0) -> list[str]:
-    """Huellas de los equipos conectados a la red (incluido este)."""
+def devices(own_ip: Optional[str], salt: str, wait: float = 2.0) -> list[dict]:
+    """Equipos conectados a la red (incluido este), como {huella, fabricante, nombre}. La huella es SHA-256 con sal:
+    la MAC no sale del computador. El fabricante viene del OUI de la MAC y el nombre del equipo (como en el Bluetooth
+    o la zona Wi-Fi) se resuelve por DNS inverso o NetBIOS; cualquiera de los dos puede faltar."""
     if not own_ip:
         return []
     wake_neighbors(own_ip)
     time.sleep(wait)
     table = run_command(["arp", "-a"]) if IS_WINDOWS else read_file("/proc/net/arp")
-    macs = set(same_subnet(parse_neighbors(table), own_ip).values())
+    by_ip = same_subnet(parse_neighbors(table), own_ip)
     mine = own_mac()
     if mine:
-        macs.add(mine)
-    return sorted(mac_fingerprint(mac, salt) for mac in macs)[:MAX_DEVICES]
+        by_ip[own_ip] = mine
+    own_name = clean_hostname(socket.gethostname(), own_ip)
+    # Los nombres se resuelven en paralelo porque cada uno puede tardar hasta un segundo.
+    with ThreadPoolExecutor(max_workers=min(len(by_ip), 32) or 1) as pool:
+        names = dict(zip(by_ip, pool.map(hostname_of, by_ip)))
+    found = []
+    for ip, mac in sorted(by_ip.items(), key=lambda item: item[1]):
+        device = {"id": mac_fingerprint(mac, salt)}
+        vendor = vendor_of(mac)
+        if vendor:
+            device["vendor"] = vendor
+        name = own_name if ip == own_ip else names.get(ip)
+        if name:
+            device["name"] = name
+        found.append(device)
+    return found[:MAX_DEVICES]
 
 
 # -------------------------------------------------------------------------------------------- latencia y puertos
@@ -456,8 +549,10 @@ def collect(salt: str) -> dict:
                         results.get("router"), results.get("devices") or [], results.get("ports") or [])
 
 
-def build_report(wifi: dict, internet: dict, router: Optional[dict], device_hashes: list[str],
+def build_report(wifi: dict, internet: dict, router: Optional[dict], found_devices: list[dict],
                  ports: list[int]) -> dict:
+    # Compatibilidad: deviceHashes (lista) la entiende el backend anterior; devices (con fabricante) la nueva versión.
+    device_hashes = [device["id"] for device in found_devices]
     report = {
         "agentVersion": AGENT_VERSION,
         "platform": platform.system()[:20] or "desconocido",
@@ -479,6 +574,7 @@ def build_report(wifi: dict, internet: dict, router: Optional[dict], device_hash
         "gatewayLatencyMs": (router or {}).get("latencyMs"),
         "deviceCount": len(device_hashes),
         "deviceHashes": device_hashes,
+        "devices": found_devices or None,
         "openPorts": ports,
     }
     return {key: value for key, value in report.items() if value is not None}
