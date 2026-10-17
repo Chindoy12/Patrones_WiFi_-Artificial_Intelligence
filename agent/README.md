@@ -26,13 +26,15 @@ Qué queda en el computador, todo a la vista y para el usuario actual (no pide p
 El instalador se construye en GitHub Actions (`.github/workflows/agente-windows.yml`, PyInstaller) cada vez que
 cambia la carpeta `agent/` en `main`, y se publica en la versión `agente` del repositorio.
 
-## Uso con Python (Windows o Linux)
+## Uso con Python (desarrollo o Linux)
 
-Solo necesita **Python 3.9 o superior** (en Windows: Microsoft Store → "Python 3.12"). No instala nada más.
+La página de WiFiSense solo ofrece el instalador de Windows, para que nadie tenga que abrir CMD. El script sigue
+siendo el mismo agente (el instalador se construye a partir de él) y se puede usar directo, por ejemplo en Linux o
+para probar cambios. Solo necesita **Python 3.9 o superior**; no instala nada más.
 
-1. En WiFiSense entra a **Mi Wi-Fi → Agente WiFiSense → Instalar agente** y anota el código.
-2. Descarga `wifisense_agent.py` (opción «Usar con Python» de esa pantalla).
-3. En CMD, en la carpeta donde lo descargaste:
+1. En WiFiSense entra a **Mi Wi-Fi → Agente WiFiSense → Instalar el agente** y anota el código.
+2. Descarga `agent/wifisense_agent.py` de este repositorio.
+3. En la carpeta donde lo descargaste:
 
 ```cmd
 python wifisense_agent.py pair K7QM-4RZD
@@ -40,8 +42,7 @@ python wifisense_agent.py scan
 python wifisense_agent.py run
 ```
 
-`pair` cambia el código por la clave del agente y la guarda. También sigue funcionando `setup`, que pide la clave
-larga (Mi Wi-Fi → Crear clave) sin mostrarla y la guarda solo para tu usuario (`%APPDATA%\WiFiSense\agent.json` en Windows,
+`pair` cambia el código por la clave del agente y la guarda solo para tu usuario (`%APPDATA%\WiFiSense\agent.json` en Windows,
 `~/.config/WiFiSense/agent.json` en Linux). `scan` mide y muestra exactamente lo que se enviaría, sin enviar nada.
 `run` envía un reporte cada 5 minutos hasta que pulses Ctrl + C (`run --once` envía uno solo).
 
@@ -53,19 +54,23 @@ Si Windows no deja leer los datos del Wi-Fi: Configuración → Privacidad y seg
 | Dato | Cómo |
 |---|---|
 | Nombre de la red, seguridad, cifrado, señal, canal, banda | `netsh wlan show interfaces` (Windows) o `nmcli` (Linux) |
-| Redes vecinas en tu canal | `netsh wlan show networks mode=bssid` o `nmcli` |
+| Redes vecinas por canal (para recomendar el mejor) | `netsh wlan show networks mode=bssid` o `nmcli` |
 | Latencia, jitter y pérdida hacia internet | 10 conexiones TCP a 1.1.1.1:443 |
 | Latencia hacia el router | 5 conexiones TCP al router |
 | Equipos conectados | un datagrama vacío a cada dirección de la red para llenar la tabla ARP y luego `arp -a` |
+| Fabricante de cada equipo | primeros 3 bytes de la MAC (OUI) en una tabla de ~180 fabricantes comunes |
+| Nombre de cada equipo | DNS inverso, NetBIOS (Windows) y mDNS/Bonjour (iPhone, Mac, Chromecast, impresoras) |
+| MAC privada | bit de «administración local»: celulares y tabletas que usan una MAC aleatoria en cada red |
 | Puertos abiertos en el router | intento de conexión a 21, 22, 23, 53, 80, 443, 445, 1900, 7547, 8080 y 8443 |
 
 ## Privacidad y seguridad
 
 - Las direcciones MAC **no salen del computador**: se envía una huella SHA-256 con una sal aleatoria creada en esta
   instalación. Sirve para saber si un equipo es nuevo, pero no para saber cuál es.
-- No se envían nombres de equipos, IP, ni el nombre del usuario del computador.
+- De cada equipo se envía el fabricante y el nombre que **él mismo anuncia** en la red (como en la lista de
+  Bluetooth), para que lo reconozcas. No se envían IP ni el nombre del usuario del computador.
 - La clave solo viaja por HTTPS (el agente rechaza `http://` salvo `localhost`, para pruebas). En el servidor se
   guarda solo su SHA-256; si la pierdes o se filtra, revócala en Mi Wi-Fi → Agente y crea otra.
 - El agente no ataca ni cambia nada: solo lee datos del sistema e intenta conexiones normales.
 
-Variables opcionales: `WIFISENSE_AGENT_KEY` y `WIFISENSE_SERVER` reemplazan lo guardado por `setup`.
+Variables opcionales: `WIFISENSE_AGENT_KEY` y `WIFISENSE_SERVER` reemplazan lo guardado por `pair` (o por `setup`, que acepta una clave larga de versiones anteriores).
