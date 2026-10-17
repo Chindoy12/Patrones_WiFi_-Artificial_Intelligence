@@ -20,9 +20,10 @@ app/scenarios.py      escenarios de fallas simuladas y etiquetadas para evaluar
 app/evaluation.py     comparación IF vs LOF vs One-Class SVM, ajuste y sensibilidad del umbral
 app/quality.py        calidad de una conexión de 0 a 100 (curvas por métrica, actividades y consejos)
 app/security.py       auditoría de seguridad de la red del usuario (cifrado, puertos del router, equipos nuevos)
+app/channel.py        mejor canal Wi-Fi según las redes vecinas que vio el agente
 app/llm_advisor.py    recomendaciones opcionales con Claude
-docs/                 evaluacion_modelos.md, modelo_calidad.md y auditoria_seguridad.md
-tests/                preprocesamiento, modelo, diagnóstico, escenarios, evaluación, seguridad, agente y API
+docs/                 evaluacion_modelos.md, modelo_calidad.md, auditoria_seguridad.md y canal_wifi.md
+tests/                preprocesamiento, modelo, diagnóstico, escenarios, evaluación, seguridad, canal, agente y API
 agent/                agente WiFiSense que corre en la casa del usuario e instalador para Windows (ver agent/README.md)
 .github/workflows/    construcción del instalador WiFiSenseAgente.exe
 ```
@@ -115,6 +116,16 @@ uno alto (WPA/TKIP, Telnet, SMB) en 64 o menos. Reglas completas: [docs/auditori
 | 40–64 | `AT_RISK` (En riesgo) |
 | 0–39 | `CRITICAL` (Crítica) |
 
+## Mejor canal Wi-Fi
+
+`POST /api/v1/channel/recommend` recibe el canal y la banda del router y cuántos puntos de acceso vecinos vio el
+agente en cada canal (`channelCounts`). Para cada canal recomendable (1, 6 y 11 en 2,4 GHz; los que no usan radar en
+5 GHz) suma la interferencia: un vecino en el mismo canal cuenta 1 y uno en un canal encimado cuenta menos (en
+2,4 GHz baja de a 0,2 por cada canal de distancia; en 5 GHz, 0,5 si está en el mismo bloque de 80 MHz). Recomienda
+cambiar solo si el nuevo canal tiene al menos una red interfiriendo menos (o si el router está en un canal de
+2,4 GHz que pisa a dos de los buenos), porque cambiar desconecta a todos unos segundos. Detalle:
+[docs/canal_wifi.md](docs/canal_wifi.md).
+
 ## Recomendaciones con Claude (opcional)
 
 Si se define `ANTHROPIC_API_KEY`, después de la detección `ClaudeAdvisor` (`app/llm_advisor.py`) pide a Claude
@@ -136,6 +147,7 @@ hasta 3 recomendaciones en español (le envía también la causa probable del di
 | POST | `/api/v1/anomalies/detect` | Detecta anomalías en una ventana de mediciones |
 | POST | `/api/v1/quality/score` | Calidad de 0 a 100 de una prueba o medición |
 | POST | `/api/v1/security/assess` | Auditoría de seguridad de 0 a 100 con hallazgos y acciones |
+| POST | `/api/v1/channel/recommend` | Canal con menos interferencia y si vale la pena cambiarlo |
 
 Si `AI_API_KEY` está definida, los endpoints `/api/v1/**` exigen la cabecera `X-API-Key`.
 
