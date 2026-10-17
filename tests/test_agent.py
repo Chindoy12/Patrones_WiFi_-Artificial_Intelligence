@@ -251,6 +251,121 @@ def test_netbios_name_reads_the_unique_entry(monkeypatch):
     assert agent.netbios_name("192.168.1.5") == "LAPTOP-ANA"
 
 
+@pytest.mark.parametrize("mac, vendor", [
+    ("f0:d7:aa:00:00:01", "Motorola"), ("10:68:2b:00:00:01", "Realme"), ("cc:6d:a0:00:00:01", "Roku"),
+    ("a0:20:a6:00:00:01", "Espressif"), ("c4:e9:0a:00:00:01", "Mercusys"),
+])
+def test_vendor_table_covers_more_brands(mac, vendor):
+    assert agent.vendor_of(mac) == vendor
+
+
+def test_vendor_table_only_has_valid_ouis():
+    assert len(agent.OUI_VENDORS) > 150
+    assert all(len(oui) == 6 and int(oui, 16) >= 0 for oui in agent.OUI_VENDORS)
+
+
+@pytest.mark.parametrize("mac, private", [
+    ("da:a1:19:00:00:01", True),   # segundo bit del primer byte en 1: MAC aleatoria de un celular
+    ("3e:22:fb:00:00:01", True), ("fc:fb:fb:11:22:33", False), ("00-11-22-33-44-55", False),
+])
+def test_detects_private_random_macs(mac, private):
+    assert agent.is_private_mac(mac) is private
+
+
+def test_devices_mark_private_macs_without_vendor(monkeypatch):
+    monkeypatch.setattr(agent, "wake_neighbors", lambda ip: None)
+    monkeypatch.setattr(agent.time, "sleep", lambda _s: None)
+    monkeypatch.setattr(agent, "IS_WINDOWS", False)
+    monkeypatch.setattr(agent, "read_file", lambda _p: (
+        "IP address       HW type     Flags       HW address            Mask     Device\n"
+        "192.168.1.5      0x1         0x2         da:a1:19:00:00:01     *        wlan0\n"
+        "192.168.1.6      0x1         0x2         fc:fb:fb:11:22:33     *        wlan0\n"))
+    monkeypatch.setattr(agent, "own_mac", lambda: None)
+    monkeypatch.setattr(agent, "hostname_of", lambda ip: None)
+
+    found = {d.get("vendor"): d for d in agent.devices("192.168.1.2", "sal", wait=0)}
+
+    assert found[None]["privateMac"] is True
+    assert "privateMac" not in found["Apple"]  # con fabricante conocido no hace falta
+
+
+def mdns_answer(name: str) -> bytes:
+    """Respuesta mDNS de ejemplo: la pregunta por 5.1.168.192.in-addr.arpa y un PTR que apunta a ella comprimida."""
+    import struct
+    question = agent.dns_name("5.1.168.192.in-addr.arpa")
+    rdata = agent.dns_name(name)
+    return (struct.pack("!HHHHHH", 0, 0x8400, 1, 1, 0, 0) + question + struct.pack("!HH", 12, 1)
+            + b"\xc0\x0c" + struct.pack("!HHIH", 12, 0x8001, 120, len(rdata)) + rdata)
+
+
+def test_mdns_query_asks_for_the_reverse_name():
+    query = agent.mdns_query("192.168.1.5")
+    assert query[:12] == b"\0\0\0\0\0\x01\0\0\0\0\0\0"
+    assert agent.dns_name("5.1.168.192.in-addr.arpa") in query
+    assert query.endswith(b"\x00\x0c\x80\x01")  # PTR, clase IN con respuesta directa (QU)
+
+
+def test_parse_mdns_ptr_follows_compression():
+    assert agent.parse_mdns_ptr(mdns_answer("iPhone-de-Ana.local")) == "iPhone-de-Ana.local"
+
+
+@pytest.mark.parametrize("packet", [b"", b"\0" * 12, agent.mdns_query("192.168.1.5")])
+def test_parse_mdns_ptr_ignores_queries_and_garbage(packet):
+    assert agent.parse_mdns_ptr(packet) is None
+
+
+def test_mdns_name_sends_to_the_multicast_group(monkeypatch):
+    sent = []
+
+    class FakeSocket:
+        def __init__(self, *args):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def settimeout(self, _t):
+            pass
+
+        def sendto(self, data, address):
+            sent.append(address)
+
+        def recvfrom(self, _size):
+            return mdns_answer("Chromecast-Sala.local"), ("192.168.1.5", 5353)
+
+    monkeypatch.setattr(agent.socket, "socket", FakeSocket)
+
+    assert agent.mdns_name("192.168.1.5") == "Chromecast-Sala"
+    assert sent == [("224.0.0.251", 5353)]
+
+
+def test_hostname_falls_back_to_mdns(monkeypatch):
+    def no_dns(_ip):
+        raise OSError("sin DNS inverso")
+
+    monkeypatch.setattr(agent.socket, "gethostbyaddr", no_dns)
+    monkeypatch.setattr(agent, "IS_WINDOWS", False)
+    monkeypatch.setattr(agent, "mdns_name", lambda ip, timeout=1.0: "MacBook-de-Luis")
+
+    assert agent.hostname_of("192.168.1.8") == "MacBook-de-Luis"
+
+
+def test_channel_counts_exclude_own_network_and_sort():
+    networks = [("Casa", 6), ("Vecino", 6), ("Vecino", 6), ("Tienda", 1), ("Otro", 11), ("Raro", 0)]
+    assert agent.channel_counts(networks, "Casa") == [
+        {"channel": 1, "networks": 1}, {"channel": 6, "networks": 2}, {"channel": 11, "networks": 1}]
+
+
+def test_report_carries_the_channel_counts():
+    report = agent.build_report({"ssid": "Casa", "channel": 6, "channelCounts": [{"channel": 6, "networks": 3}]},
+                                {}, None, [], [])
+    assert report["channelCounts"] == [{"channel": 6, "networks": 3}]
+    assert "channelCounts" not in agent.build_report({"ssid": "Casa", "channelCounts": []}, {}, None, [], [])
+
+
 @pytest.mark.parametrize("url, ok", [
     ("https://wifisense.example.com/", True), ("http://localhost:8099", True), ("http://127.0.0.1:8080", True),
     ("http://wifisense.example.com", False), ("ftp://localhost", False), ("https://", False),
