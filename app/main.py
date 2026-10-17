@@ -6,10 +6,11 @@ from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
 
-from app import evaluation, quality, security
+from app import channel, evaluation, quality, security
 from app.llm_advisor import ClaudeAdvisor
 from app.model_service import AnomalyDetectionService
 from app.schemas import AnalysisRequest, AnalysisResponse, EvaluationReport, ModelInfo
+from app.schemas_channel import ChannelRequest, ChannelResponse
 from app.schemas_quality import QualityRequest, QualityResponse
 from app.schemas_security import SecurityRequest, SecurityResponse
 
@@ -54,7 +55,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="WiFiSense AI", version="1.2.0", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
+app = FastAPI(title="WiFiSense AI", version="1.3.0", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
 
 
 def verify_api_key(x_api_key: str | None = Header(default=None)) -> None:
@@ -117,3 +118,10 @@ def quality_score(payload: QualityRequest) -> QualityResponse:
 def security_assess(payload: SecurityRequest) -> SecurityResponse:
     """0-100 security audit of a home network from what the agent saw: encryption, router ports, new devices."""
     return security.assess(payload)
+
+
+@app.post("/api/v1/channel/recommend", response_model=ChannelResponse, response_model_by_alias=True,
+          dependencies=[Depends(verify_api_key)])
+def channel_recommend(payload: ChannelRequest) -> ChannelResponse:
+    """Channel with the least interference from the neighbouring networks the agent saw, and whether to move to it."""
+    return channel.recommend(payload)
