@@ -11,7 +11,7 @@ Solo usa la biblioteca estándar de Python 3.9 o superior (no hay que instalar n
 
 Qué mide y qué envía:
   * Datos del Wi-Fi que muestra el sistema (nombre, tipo de seguridad, señal, canal, banda) y cuántas redes vecinas
-    usan el mismo canal.
+    usan cada canal, para recomendarte el canal con menos interferencia.
   * Latencia, variación (jitter) y pérdida hacia internet y hacia el router.
   * Cuántos equipos hay conectados y, de cada uno, el fabricante (según la MAC) y el nombre que anuncia en la red,
     para que los reconozcas como en el Bluetooth. Las direcciones MAC NO salen de tu computador: se envía una huella
@@ -31,6 +31,7 @@ import re
 import secrets
 import socket
 import statistics
+import struct
 import subprocess
 import sys
 import threading
@@ -43,7 +44,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Callable, Optional
 
-AGENT_VERSION = "1.2.0"
+AGENT_VERSION = "1.3.0"
 DEFAULT_SERVER = "https://patroneswifibackend-production.up.railway.app"
 REPORT_PATH = "/api/agent/reports"
 PAIR_PATH = "/api/agent/pair"
@@ -263,6 +264,19 @@ def neighbors_on_channel(networks: list[tuple[str, int]], ssid: str, channel: Op
     return sum(1 for _, ch in others if ch == channel), len({name for name, _ in others})
 
 
+MAX_CHANNELS = 60
+
+
+def channel_counts(networks: list[tuple[str, int]], ssid: str) -> list[dict]:
+    """Cuántos puntos de acceso vecinos (sin contar los de tu propia red) usa cada canal, de menor a mayor. Con esto la
+    IA recomienda a qué canal mover el router para tener menos interferencia."""
+    counts: dict[int, int] = {}
+    for name, channel in networks:
+        if name != ssid and 0 < channel <= 196:
+            counts[channel] = counts.get(channel, 0) + 1
+    return [{"channel": channel, "networks": count} for channel, count in sorted(counts.items())][:MAX_CHANNELS]
+
+
 LOCATION_HINT = ("location", "ubicaci")
 
 
@@ -279,6 +293,7 @@ def wifi_info() -> dict:
     if info.get("ssid"):
         same, total = neighbors_on_channel(networks, info["ssid"], info.get("channel"))
         info["neighborsSameChannel"], info["neighborsTotal"] = same, total
+        info["channelCounts"] = channel_counts(networks, info["ssid"])
     return info
 
 
@@ -364,20 +379,64 @@ def wake_neighbors(own_ip: str) -> None:
 OUI_VENDORS = {
     "fcfbfb": "Apple", "a4c361": "Apple", "d0817a": "Apple", "f0d1a9": "Apple", "3c0754": "Apple", "a85c2c": "Apple",
     "ac1f74": "Apple", "88665a": "Apple", "f4f15a": "Apple", "9027e4": "Apple", "e0accb": "Apple", "dca904": "Apple",
+    "a4b197": "Apple", "d49a20": "Apple", "7cd1c3": "Apple", "609217": "Apple", "8866a5": "Apple", "f0766f": "Apple",
+    "c869cd": "Apple", "04d3cf": "Apple", "8c8590": "Apple", "a860b6": "Apple", "2c6134": "Apple",
     "ecfabc": "Samsung", "8425db": "Samsung", "f409d8": "Samsung", "5001bb": "Samsung", "bc1485": "Samsung",
     "e8508b": "Samsung", "a02bb8": "Samsung", "34231f": "Samsung", "c87e75": "Samsung", "d0667b": "Samsung",
+    "8c7712": "Samsung", "1c62b8": "Samsung", "5056bf": "Samsung", "bc8ccd": "Samsung", "0023d7": "Samsung",
+    "fcc734": "Samsung", "b8d9ce": "Samsung", "78f882": "Samsung",
+    "286c07": "Xiaomi", "64b473": "Xiaomi", "f8a2d6": "Xiaomi", "acc1ee": "Xiaomi", "2082c0": "Xiaomi",
+    "7c1dd9": "Xiaomi", "ac898c": "Xiaomi", "9c99a0": "Xiaomi", "3480b3": "Xiaomi", "d4970b": "Xiaomi",
+    "50ec50": "Xiaomi", "a09f10": "Xiaomi", "fc64ba": "Xiaomi",
+    "48e1e9": "Huawei", "70723c": "Huawei", "e8089f": "Huawei", "c40528": "Huawei", "00e0fc": "Huawei",
+    "d8490b": "Huawei", "10b1f8": "Huawei", "ac4e91": "Huawei", "b4cd27": "Huawei", "24692a": "Huawei",
+    "e0247f": "Honor", "80a359": "Honor",
+    "f0d7aa": "Motorola", "ccc3ea": "Motorola", "40786a": "Motorola",
+    "6c5697": "Lenovo", "70f087": "Lenovo",
+    "c4f561": "Oppo", "d4a148": "Oppo",
+    "94652d": "OnePlus", "64a2f9": "OnePlus",
+    "3c28a6": "Vivo", "381d14": "Vivo",
+    "10682b": "Realme",
     "f8a9d0": "LG", "d013fd": "LG", "a816b2": "LG", "00e091": "LG",
     "3c5ab4": "Google", "f4f5e8": "Google", "1c53f9": "Google", "d8eb97": "Google", "48d6d5": "Google",
+    "1844e3": "Google", "6466b3": "Google", "9cfc01": "Google", "e4f042": "Google", "f4039a": "Google",
     "fc65de": "Amazon", "44650d": "Amazon", "68543d": "Amazon", "ac63be": "Amazon", "f0272d": "Amazon",
-    "286c07": "Xiaomi", "64b473": "Xiaomi", "f8a2d6": "Xiaomi", "acc1ee": "Xiaomi", "2082c0": "Xiaomi",
-    "48e1e9": "Huawei", "70723c": "Huawei", "e8089f": "Huawei", "c40528": "Huawei", "00e0fc": "Huawei",
+    "f8f005": "Amazon", "0c47c9": "Amazon", "40b4cd": "Amazon", "50dce7": "Amazon", "8871e5": "Amazon",
     "5c628b": "TP-Link", "f4ec38": "TP-Link", "c006c3": "TP-Link", "503eaa": "TP-Link", "d80d17": "TP-Link",
-    "ec086b": "TP-Link", "a42bb0": "TP-Link",
+    "ec086b": "TP-Link", "a42bb0": "TP-Link", "9c5322": "TP-Link", "60a4b7": "TP-Link", "1c61b4": "TP-Link",
+    "003192": "TP-Link",
+    "c4e90a": "Mercusys",
+    "d8070b": "Tenda", "c83a35": "Tenda",
+    "ec2280": "D-Link", "1cbdb9": "D-Link",
+    "9cd36d": "Netgear", "2cb05d": "Netgear",
+    "04d9f5": "Asus", "88d7f6": "Asus", "2c4d54": "Asus",
+    "788a20": "Ubiquiti", "fcecda": "Ubiquiti", "e063da": "Ubiquiti",
+    "4c5e0c": "MikroTik", "cc2de0": "MikroTik",
+    "002674": "ZTE", "4c09b4": "ZTE",
+    "341513": "Technicolor",
+    "84a8e4": "Sagemcom",
     "b827eb": "Raspberry Pi", "dca632": "Raspberry Pi", "e45f01": "Raspberry Pi",
     "001a11": "Intel", "3c970e": "Intel", "7c7a91": "Intel", "e4a471": "Intel", "a0a8cd": "Intel", "9cb6d0": "Intel",
-    "000c29": "VMware", "005056": "VMware", "080027": "VirtualBox",
-    "d8bbc1": "Microsoft", "c83f26": "Sony", "e89309": "Sony", "001315": "Nintendo", "e84e06": "Realtek",
-    "70b3d5": "Cámara IP", "001788": "Philips Hue", "ecb5fa": "Philips Hue",
+    "a4c3f0": "Intel", "9c305b": "Intel",
+    "f8e43b": "Dell", "f8bc12": "Dell",
+    "3ca82a": "HP", "308d99": "HP",
+    "001a4d": "Gigabyte",
+    "d8bbc1": "Microsoft", "001ddf": "Microsoft", "582f40": "Microsoft", "7ced8d": "Microsoft",
+    "c83f26": "Sony", "e89309": "Sony", "a8e3ee": "Sony", "fc0fe6": "Sony", "78c881": "Sony",
+    "001315": "Nintendo", "0009bf": "Nintendo", "e0e751": "Nintendo",
+    "cc6da0": "Roku", "b83e59": "Roku",
+    "b8278a": "Sonos", "5cae8b": "Sonos",
+    "a020a6": "Espressif", "246f28": "Espressif", "8caab5": "Espressif", "d8f15b": "Espressif",
+    "bcff4d": "Espressif",
+    "d4a651": "Tuya", "68572d": "Tuya",
+    "4419b6": "Hikvision",
+    "bc325f": "Dahua",
+    "9c8ecd": "Reolink",
+    "e84e06": "Realtek",
+    "000c29": "VMware", "005056": "VMware",
+    "080027": "VirtualBox",
+    "70b3d5": "Cámara IP",
+    "001788": "Philips Hue", "ecb5fa": "Philips Hue",
 }
 
 
@@ -385,6 +444,13 @@ def vendor_of(mac: str) -> Optional[str]:
     """Fabricante del equipo según el OUI de su MAC, o None si no está en la lista."""
     oui = mac.lower().replace(":", "").replace("-", "")[:6]
     return OUI_VENDORS.get(oui)
+
+
+def is_private_mac(mac: str) -> bool:
+    """MAC «privada» o aleatoria: el bit de administración local (el segundo menos significativo del primer byte) en 1.
+    Los celulares y tabletas modernos (iPhone desde iOS 14, Android desde la versión 10) usan una así en cada red
+    Wi-Fi para que no los rastreen; por eso su fabricante no se puede saber, pero casi siempre es un celular o tableta."""
+    return bool(int(mac.replace("-", ":").split(":")[0], 16) & 0b10)
 
 
 # Sufijos que el router o el sistema le agregan al nombre y que no aportan nada al usuario.
@@ -409,7 +475,8 @@ def clean_hostname(raw: Optional[str], ip: str) -> Optional[str]:
 
 def hostname_of(ip: str, timeout: float = 1.0) -> Optional[str]:
     """Nombre que anuncia el equipo en la red (como lo muestran el Bluetooth o la zona Wi-Fi del celular). Se intenta
-    por DNS inverso y, en Windows, por NetBIOS; si nadie responde a tiempo, queda sin nombre."""
+    por DNS inverso, en Windows por NetBIOS y por último por mDNS (lo usan iPhone, Mac, Chromecast, impresoras y
+    muchos televisores); si nadie responde a tiempo, queda sin nombre."""
     previous = socket.getdefaulttimeout()
     socket.setdefaulttimeout(timeout)
     try:
@@ -421,7 +488,82 @@ def hostname_of(ip: str, timeout: float = 1.0) -> Optional[str]:
     finally:
         socket.setdefaulttimeout(previous)
     if IS_WINDOWS:
-        return netbios_name(ip)
+        name = netbios_name(ip)
+        if name:
+            return name
+    return mdns_name(ip, timeout)
+
+
+MDNS_GROUP = ("224.0.0.251", 5353)
+DNS_PTR = 12
+
+
+def dns_name(name: str) -> bytes:
+    """Nombre en el formato de DNS: cada parte con su longitud delante y un 0 al final."""
+    return b"".join(bytes([len(part)]) + part.encode() for part in name.split(".") if part) + b"\0"
+
+
+def mdns_query(ip: str) -> bytes:
+    """Pregunta PTR por la IP al revés (4.3.2.1.in-addr.arpa) con el bit QU, para que el equipo responda directo."""
+    reverse = ".".join(reversed(ip.split("."))) + ".in-addr.arpa"
+    header = struct.pack("!HHHHHH", 0, 0, 1, 0, 0, 0)  # id 0, consulta normal, 1 pregunta
+    return header + dns_name(reverse) + struct.pack("!HH", DNS_PTR, 0x8001)  # tipo PTR, clase IN con bit QU
+
+
+def read_dns_name(data: bytes, offset: int, depth: int = 0) -> tuple[str, int]:
+    """Lee un nombre de un paquete DNS (con los punteros de compresión) y devuelve (nombre, posición siguiente)."""
+    parts, end = [], None
+    while depth < 20:
+        length = data[offset]
+        if length == 0:
+            offset += 1
+            break
+        if length & 0xC0 == 0xC0:  # puntero: el resto del nombre está en otra parte del paquete
+            pointer = struct.unpack_from("!H", data, offset)[0] & 0x3FFF
+            end = end if end is not None else offset + 2
+            offset, depth = pointer, depth + 1
+            continue
+        parts.append(data[offset + 1: offset + 1 + length].decode("utf-8", "replace"))
+        offset += 1 + length
+    return ".".join(parts), end if end is not None else offset
+
+
+def parse_mdns_ptr(data: bytes) -> Optional[str]:
+    """Primer registro PTR de las respuestas de un paquete mDNS (el nombre .local del equipo), o None."""
+    try:
+        _, flags, questions, answers = struct.unpack_from("!HHHH", data, 0)
+        if not flags & 0x8000:  # no es una respuesta
+            return None
+        offset = 12
+        for _ in range(questions):
+            offset = read_dns_name(data, offset)[1] + 4
+        for _ in range(answers):
+            offset = read_dns_name(data, offset)[1]
+            rtype, _, _, length = struct.unpack_from("!HHIH", data, offset)
+            offset += 10
+            if rtype == DNS_PTR:
+                return read_dns_name(data, offset)[0]
+            offset += length
+    except (struct.error, IndexError):
+        pass
+    return None
+
+
+def mdns_name(ip: str, timeout: float = 1.0) -> Optional[str]:
+    """Nombre del equipo por mDNS (Bonjour). Se envía desde un puerto cualquiera, así el equipo responde directo a
+    este computador y no hace falta ocupar el puerto 5353."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.settimeout(timeout)
+            sock.sendto(mdns_query(ip), MDNS_GROUP)
+            deadline = time.monotonic() + timeout
+            while time.monotonic() < deadline:
+                data, _ = sock.recvfrom(4096)
+                name = parse_mdns_ptr(data)
+                if name:
+                    return clean_hostname(name, ip)
+    except OSError:
+        pass
     return None
 
 
@@ -449,7 +591,8 @@ def own_mac() -> Optional[str]:
 def devices(own_ip: Optional[str], salt: str, wait: float = 2.0) -> list[dict]:
     """Equipos conectados a la red (incluido este), como {huella, fabricante, nombre}. La huella es SHA-256 con sal:
     la MAC no sale del computador. El fabricante viene del OUI de la MAC y el nombre del equipo (como en el Bluetooth
-    o la zona Wi-Fi) se resuelve por DNS inverso o NetBIOS; cualquiera de los dos puede faltar."""
+    o la zona Wi-Fi) se resuelve por DNS inverso, NetBIOS o mDNS; cualquiera de los dos puede faltar. Si la MAC es
+    privada (aleatoria) se marca, porque casi siempre es un celular o una tableta."""
     if not own_ip:
         return []
     wake_neighbors(own_ip)
@@ -469,6 +612,8 @@ def devices(own_ip: Optional[str], salt: str, wait: float = 2.0) -> list[dict]:
         vendor = vendor_of(mac)
         if vendor:
             device["vendor"] = vendor
+        elif is_private_mac(mac):
+            device["privateMac"] = True  # casi siempre un celular o tableta con la MAC aleatoria activada
         name = own_name if ip == own_ip else names.get(ip)
         if name:
             device["name"] = name
@@ -567,6 +712,7 @@ def build_report(wifi: dict, internet: dict, router: Optional[dict], found_devic
         "txRateMbps": wifi.get("txRateMbps"),
         "neighborsSameChannel": wifi.get("neighborsSameChannel"),
         "neighborsTotal": wifi.get("neighborsTotal"),
+        "channelCounts": wifi.get("channelCounts") or None,
         "wifiNote": wifi.get("note"),
         "latencyMs": internet.get("latencyMs"),
         "jitterMs": internet.get("jitterMs"),
