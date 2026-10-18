@@ -462,3 +462,98 @@ def test_send_shows_why_the_server_rejected_the_report():
 def test_cipher_is_always_short(text, expected):
     assert agent.cipher_of(text) == expected
     assert expected is None or len(agent.cipher_of(text)) <= 20
+
+
+# ------------------------------------------------------------------------------------------------------- tráfico
+
+PROC_NET_DEV = """Inter-|   Receive                                                |  Transmit
+ face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets errs drop fifo colls carrier compressed
+    lo: 9000      90    0    0    0     0          0         0     9000      90    0    0    0     0       0          0
+ wlan0: 5000000  4000    0    0    0     0          0         0  1000000   2500    0    0    0     0       0          0
+docker0: 777777   777    0    0    0     0          0         0   777777    777    0    0    0     0       0          0
+"""
+
+PROC_NET_SNMP = """Ip: Forwarding DefaultTTL InReceives
+Ip: 1 64 6500
+Icmp: InMsgs InErrors OutMsgs
+Icmp: 12 0 10
+Tcp: RtoAlgorithm RtoMin InSegs OutSegs
+Tcp: 1 200 3000 2900
+Udp: InDatagrams NoPorts InErrors OutDatagrams
+Udp: 400 0 0 350
+"""
+
+PROC_NET_SNMP6 = """Udp6InDatagrams                 40
+Udp6OutDatagrams                30
+Icmp6InMsgs                     2
+Icmp6OutMsgs                    1
+Ip6InReceives                   99
+"""
+
+
+def test_linux_counters_skip_loopback_and_bridges():
+    assert agent.parse_proc_net_dev(PROC_NET_DEV) == {
+        "bytes.in": 5_000_000, "bytes.out": 1_000_000, "packets.in": 4000, "packets.out": 2500}
+    assert agent.parse_proc_net_dev("") == {}
+
+
+def test_linux_protocol_counters_include_ipv6():
+    assert agent.parse_proc_net_snmp(PROC_NET_SNMP, PROC_NET_SNMP6) == {
+        "ICMP.in4": 12, "ICMP.out4": 10, "TCP.in4": 3000, "TCP.out4": 2900, "UDP.in4": 400, "UDP.out4": 350,
+        "UDP.in6": 40, "UDP.out6": 30, "ICMP.in6": 2, "ICMP.out6": 1}
+
+
+def test_a_32_bit_protocol_counter_that_wraps_still_counts_but_a_reboot_does_not():
+    assert agent.counter_delta(150, 100, "TCP.in4") == 50
+    assert agent.counter_delta(10, 2 ** 32 - 90, "TCP.in4") == 100
+    assert agent.counter_delta(10, 5_000, "TCP.in4") is None
+    assert agent.counter_delta(10, 2 ** 32 - 90, "bytes.in") is None  # 64-bit: going back is a restart
+
+
+def test_the_report_carries_the_traffic_since_the_previous_one():
+    before = {"bytes.in": 1000, "bytes.out": 500, "packets.in": 10, "packets.out": 8, "TCP.in4": 100,
+              "TCP.out4": 90, "UDP.in4": 5, "UDP.in6": 1, "ICMP.in4": 0}
+    now = {"bytes.in": 5_243_880, "bytes.out": 1500, "packets.in": 4010, "packets.out": 108, "TCP.in4": 3100,
+           "TCP.out4": 1090, "UDP.in4": 55, "UDP.in6": 3, "ICMP.in4": 0}
+    fields = agent.traffic_fields({"at": 1000.0, "counters": before}, now, now=1300.0)
+    assert fields == {"trafficBytes": 5_243_880, "trafficPackets": 4100,
+                      "protocolPackets": [{"protocol": "TCP", "packets": 4000}, {"protocol": "UDP", "packets": 52},
+                                          {"protocol": "ICMP", "packets": 0}]}
+
+
+def test_no_traffic_the_first_time_after_a_long_pause_or_a_restart():
+    counters = {"bytes.in": 10, "bytes.out": 10, "packets.in": 1, "packets.out": 1}
+    assert agent.traffic_fields(None, counters, now=1000.0) == {}
+    assert agent.traffic_fields({"at": 0.0, "counters": counters}, counters, now=10_000.0) == {}
+    restarted = dict(counters, **{"bytes.in": 1})
+    assert agent.traffic_fields({"at": 900.0, "counters": counters}, restarted, now=1000.0) == {}
+    assert agent.traffic_fields({"at": 900.0, "counters": counters}, {}, now=1000.0) == {}
+
+
+def test_the_counters_are_kept_only_after_the_report_arrived(tmp_path, monkeypatch):
+    state = tmp_path / "traffic.json"
+    monkeypatch.setattr(agent, "traffic_state_path", lambda: state)
+    monkeypatch.setattr(agent, "load_config", lambda: {"key": "wsa_" + "k" * 43, "server": "https://x.example"})
+    monkeypatch.setattr(agent, "ensure_salt", lambda config: "sal")
+    monkeypatch.setattr(agent, "collect", lambda salt: {"deviceCount": 0, "openPorts": []})
+    monkeypatch.setattr(agent, "traffic_counters", lambda: {"bytes.in": 1, "bytes.out": 1, "packets.in": 1,
+                                                            "packets.out": 1})
+
+    def refused(report, server, key):
+        raise agent.SendError("sin conexión")
+    monkeypatch.setattr(agent, "send", refused)
+    assert agent.command_run(agent.argparse.Namespace(once=True, interval=300)) == 1
+    assert not state.exists()
+
+    monkeypatch.setattr(agent, "send", lambda report, server, key: {"summary": "ok"})
+    assert agent.command_run(agent.argparse.Namespace(once=True, interval=300)) == 0
+    assert agent.load_traffic_state(state)["counters"] == {"bytes.in": 1, "bytes.out": 1, "packets.in": 1,
+                                                           "packets.out": 1}
+
+
+@pytest.mark.skipif(os.name != "nt", reason="la API IP Helper solo existe en Windows")
+def test_windows_reads_its_own_counters():
+    counters = agent.windows_counters()
+    assert counters, "la estructura MIB_IF_ROW2 no coincide o la API no respondió"
+    assert counters["TCP.in4"] >= 0 and counters["UDP.out4"] >= 0
+    assert {"bytes.in", "bytes.out", "packets.in", "packets.out"} <= counters.keys()
