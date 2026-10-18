@@ -6,8 +6,11 @@ Con esos reportes la IA te dice **cuántos equipos están conectados**, si apare
 
 El mismo programa es el **sensor de las redes del equipo**: en el panel, **Redes → (la red) → Conectar sensor** muestra
 un código de 8 caracteres; se instala igual, en un computador conectado a esa red, y desde entonces sus reportes son
-las mediciones reales de esa red (latencia, pérdida, señal, velocidad del enlace, equipos y tráfico). El código
-decide para cuál red trabaja: uno de Mi Wi-Fi la conecta con la casa del usuario; uno del panel, con la red del equipo.
+las mediciones reales de esa red (latencia, pérdida, señal, velocidad del enlace, equipos y tráfico). Desde 1.5.0 el
+panel muestra además, como Mi Wi-Fi, los equipos conectados (fabricante y nombre), la auditoría de seguridad y el mejor
+canal. El código decide para cuál red trabaja: uno de Mi Wi-Fi la conecta con la casa del usuario; uno del panel, con
+la red del equipo. Un computador mide una sola red (la del Wi-Fi al que está conectado): un código nuevo lo cambia de
+red.
 
 ## Instalación en Windows (sin Python)
 
@@ -16,7 +19,16 @@ decide para cuál red trabaja: uno de Mi Wi-Fi la conecta con la casa del usuari
 2. Abre `WiFiSenseAgente.exe`. Como es un programa nuevo sin firma digital, Windows puede mostrar «Windows protegió
    su PC»: pulsa **Más información → Ejecutar de todas formas**.
 3. La ventana explica qué hace el agente. Escribe el código, deja marcada (o no) la opción de iniciar con Windows y
-   pulsa **Instalar**. En segundos aparecen los datos en Mi Wi-Fi.
+   pulsa **Instalar**. En segundos aparecen los datos en Mi Wi-Fi (o en el panel del sensor).
+4. Para pasarlo a otra red no hay que descargarlo otra vez: abre el mismo programa, pulsa **Usar otro código** y
+   escribe el código nuevo.
+
+**Reinstalar con el agente en marcha (1.5.0).** El programa de PyInstaller corre como dos procesos y los dos
+mantienen abierto el `.exe`; hasta 1.4.0 el instalador detenía solo uno y Windows no dejaba reemplazar el programa
+(«WinError 32 … está siendo utilizado por otro proceso»). Además gastaba el código antes de copiar, así que el
+siguiente intento decía «El código no es válido o ya venció». Ahora detiene todos los procesos que corren desde el
+programa instalado (nunca el propio instalador), espera a que Windows suelte el archivo, copia y solo entonces usa el
+código. Si algo falla, el agente que ya estaba sigue midiendo su red.
 
 Qué queda en el computador, todo a la vista y para el usuario actual (no pide permisos de administrador):
 
