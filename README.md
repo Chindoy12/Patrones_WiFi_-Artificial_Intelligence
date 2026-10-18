@@ -211,8 +211,11 @@ respuesta en `ai_predictions`, actualiza el estado de la red y genera alertas si
 
 El agente (`agent/`) también es el **sensor de las redes del equipo**: con un código del panel, sus reportes llegan al
 backend como mediciones reales de esa red (fuente `AGENT`), con el tráfico del computador y sus paquetes por protocolo,
-y el backend corre sobre ellas el mismo análisis por umbrales del monitoreo. El instalador se prueba en Windows real en
-cada Pull Request que cambie el agente (`.github/workflows/agente-windows.yml`) y se publica al llegar a `main`.
+y el backend corre sobre ellas el mismo análisis por umbrales del monitoreo. Con cada reporte del sensor el backend
+pide también la auditoría de seguridad, la calidad y el mejor canal (los mismos endpoints de Mi Wi-Fi), y el panel
+muestra los equipos conectados de esa red. El instalador (1.5.0 reinstala aunque el agente esté en marcha) se prueba en
+Windows real en cada Pull Request que cambie el agente (`.github/workflows/agente-windows.yml`) y se publica al llegar a
+`main`.
 
 ## Pendiente
 
