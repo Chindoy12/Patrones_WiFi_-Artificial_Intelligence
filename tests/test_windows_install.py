@@ -1,11 +1,15 @@
 """Installation logic of the Windows agent, with a fake registry (the real one only exists on Windows)."""
 import json
 import os
+import shutil
+import subprocess
+import time
 import urllib.error
 
 import pytest
 
 from agent import app
+from agent import installation
 from agent import wifisense_agent as agent
 from agent import windows_install as setup
 
@@ -156,3 +160,121 @@ def test_commands_other_than_install_go_to_the_agent(monkeypatch):
 
     assert app.main(["scan"]) == 0
     assert called == [["scan"]]
+
+
+def test_copying_waits_while_windows_keeps_the_old_program_locked(tmp_path):
+    attempts, waits = [], []
+
+    def locked_twice(source, target):
+        attempts.append(target)
+        if len(attempts) < 3:
+            raise PermissionError(32, "El proceso no tiene acceso al archivo porque está siendo utilizado")
+
+    setup.copy_with_retry(tmp_path / "a.exe", tmp_path / "b.exe", copy=locked_twice, sleep=waits.append)
+    assert len(attempts) == 3 and waits == [0.5, 0.5]
+
+    with pytest.raises(PermissionError):
+        setup.copy_with_retry(tmp_path / "a.exe", tmp_path / "b.exe", attempts=2,
+                              copy=lambda *_: (_ for _ in ()).throw(PermissionError(32, "en uso")), sleep=waits.append)
+
+
+def test_stopping_ends_every_agent_running_from_the_installed_program_but_never_the_installer(paths):
+    ended = []
+    running = {os.getpid(), os.getppid(), 4100, 4200}  # the installer (and its launcher) and the old agent's two
+
+    setup.stop_running_agent(paths, find=lambda exe: sorted(running) if exe == paths.exe else [],
+                             terminate=ended.append)
+
+    assert ended == [4100, 4200]
+
+
+class Steps:
+    """Fakes for the installation, recording the order in which they happen."""
+
+    def __init__(self, copy_error=None, pair_error=None):
+        self.done = []
+        self.copy_error = copy_error
+        self.pair_error = pair_error
+
+    def stop(self, paths):
+        self.done.append("stop")
+
+    def copy_in(self):
+        self.done.append("copy")
+        if self.copy_error:
+            raise self.copy_error
+        return "C:/WiFiSense/WiFiSenseAgente.exe"
+
+    def pair(self, code, server):
+        self.done.append("pair")
+        if self.pair_error:
+            raise self.pair_error
+        return {"key": "wsa_" + "k" * 43, "networkName": "Lab-Redes"}
+
+    def start(self, paths):
+        self.done.append("start")
+
+
+@pytest.fixture
+def configured(monkeypatch, paths):
+    """An agent already installed and measuring another network."""
+    paths.install_dir.mkdir(parents=True)
+    paths.exe.write_bytes(b"MZ")
+    saved = []
+    monkeypatch.setattr(agent, "load_config", lambda: {"server": "https://wifisense.example.com", "key": "wsa_old"})
+    monkeypatch.setattr(agent, "save_pairing", lambda answer, server: saved.append(answer["networkName"]))
+    return saved
+
+
+def run(steps, paths):
+    return installation.install_and_pair("K7QM-4RZD", True, paths, FakeRegistry(), pair=steps.pair, stop=steps.stop,
+                                         copy_in=steps.copy_in, start=steps.start)
+
+
+def test_the_code_is_used_only_after_the_program_is_in_place(paths, configured):
+    steps = Steps()
+
+    assert run(steps, paths) == ("Lab-Redes", "C:/WiFiSense/WiFiSenseAgente.exe")
+    assert steps.done == ["stop", "copy", "pair", "start"]
+    assert configured == ["Lab-Redes"]
+
+
+def test_if_windows_does_not_let_copy_the_code_is_not_spent(paths, configured):
+    steps = Steps(copy_error=PermissionError(32, "El proceso no tiene acceso al archivo"))
+
+    message = run(steps, paths)
+
+    assert "pair" not in steps.done
+    assert "el código no se gastó" in message and "Administrador de tareas" in message
+    assert steps.done[-1] == "start"  # the agent that was installed goes on measuring its network
+    assert configured == []
+
+
+def test_a_refused_code_keeps_the_previous_agent_measuring(paths, configured):
+    steps = Steps(pair_error=agent.SendError("el servidor respondió 400: El código no es válido", fatal=True))
+
+    message = run(steps, paths)
+
+    assert message.startswith("No se pudo instalar: el servidor respondió 400")
+    assert steps.done == ["stop", "copy", "pair", "start"]
+    assert configured == []
+
+
+@pytest.mark.skipif(os.name != "nt", reason="solo en Windows: un programa en ejecución no se puede reemplazar")
+def test_reinstalling_replaces_the_program_while_the_old_agent_is_running(paths, program):
+    paths.install_dir.mkdir(parents=True)
+    shutil.copy2(os.path.join(os.environ["SystemRoot"], "System32", "PING.EXE"), paths.exe)
+    old_agent = subprocess.Popen([str(paths.exe), "-n", "60", "127.0.0.1"], stdout=subprocess.DEVNULL)
+    try:
+        time.sleep(1)
+        assert old_agent.pid in setup.processes_running_from(paths.exe)
+        with pytest.raises(PermissionError):
+            setup.copy_with_retry(program, paths.exe, attempts=1)  # what the old installer ran into
+
+        setup.stop_running_agent(paths)
+        setup.install(program, paths, FakeRegistry(), "1.5.0", autostart=False)
+
+        assert old_agent.wait(timeout=10) is not None
+        assert paths.exe.read_bytes() == program.read_bytes()
+    finally:
+        old_agent.kill()
