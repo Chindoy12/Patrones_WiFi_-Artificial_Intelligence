@@ -1,11 +1,14 @@
 # Builds the Windows installer of the agent (WiFiSenseAgente.exe) with PyInstaller and publishes it in the release
-# "agente", which is the link Mi Wi-Fi offers for download. Runs when the agent changes on main, or by hand.
+# "agente", which is the link Mi Wi-Fi and the team panel offer for download. Runs when the agent changes on main, or
+# by hand. On a Pull Request it only tests and builds (on real Windows, so the system counters are tested too).
 name: Agente para Windows
 
 on:
   push:
     branches: [main]
-    paths: ["agent/**", ".github/workflows/agente-windows.yml"]
+    paths: ["agent/**", "tests/test_agent.py", ".github/workflows/agente-windows.yml"]
+  pull_request:
+    paths: ["agent/**", "tests/test_agent.py", ".github/workflows/agente-windows.yml"]
   workflow_dispatch:
 
 permissions:
@@ -15,9 +18,9 @@ jobs:
   build:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
@@ -37,18 +40,20 @@ jobs:
           $p = Start-Process -FilePath dist\WiFiSenseAgente.exe -ArgumentList "pair","X" -PassThru -Wait
           if ($p.ExitCode -ne 1) { throw "exit code $($p.ExitCode)" }
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: WiFiSenseAgente
           path: dist/WiFiSenseAgente.exe
 
       - name: Publicar en la versión "agente"
-        uses: softprops/action-gh-release@v2
+        if: github.event_name != 'pull_request'
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: agente
           name: Agente WiFiSense para Windows
           body: |
-            Instalador del agente WiFiSense para Windows 10 y 11. Descárgalo desde Mi Wi-Fi > Agente WiFiSense,
-            ábrelo con doble clic y pega el código de instalación.
+            Instalador del agente WiFiSense para Windows 10 y 11. Descárgalo desde Mi Wi-Fi > Agente WiFiSense (o,
+            para el sensor de una red del equipo, desde el panel > Redes > Conectar sensor), ábrelo con doble clic y
+            pega el código de instalación.
           files: dist/WiFiSenseAgente.exe
           make_latest: false
