@@ -14,9 +14,10 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Protocol
+from typing import Callable, Iterable, Optional, Protocol
 
 APP_ID = "WiFiSenseAgente"
 DISPLAY_NAME = "Agente WiFiSense"
@@ -115,7 +116,7 @@ def install(source_exe: Path, paths: Paths, registry: Registry, version: str, au
     paths.install_dir.mkdir(parents=True, exist_ok=True)
     paths.data_dir.mkdir(parents=True, exist_ok=True)
     if source_exe.resolve() != paths.exe.resolve():
-        shutil.copy2(source_exe, paths.exe)
+        copy_with_retry(source_exe, paths.exe)
     size_kb = max(paths.exe.stat().st_size // 1024, 1)
     registry.set_values(UNINSTALL_KEY, {
         "DisplayName": DISPLAY_NAME,
@@ -160,18 +161,125 @@ def start_agent(paths: Paths) -> None:
                      stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
-def stop_running_agent(paths: Paths) -> None:
-    """Detiene el agente si está corriendo; comprueba que el PID sea de verdad el agente antes de tocarlo."""
+def copy_with_retry(source: Path, target: Path, attempts: int = 20, wait: float = 0.5,
+                    copy: Callable = shutil.copy2, sleep: Callable = time.sleep) -> None:
+    """Copies the program; Windows keeps a file locked for a moment after its process ends, so it tries again."""
+    for attempt in range(1, attempts + 1):
+        try:
+            copy(source, target)
+            return
+        except PermissionError:
+            if attempt == attempts:
+                raise
+            sleep(wait)
+
+
+def stop_running_agent(paths: Paths, find: Optional[Callable[[Path], Iterable[int]]] = None,
+                       terminate: Optional[Callable[[int], None]] = None) -> None:
+    """
+    Stops every agent running from the installed program, so it can be replaced. Earlier versions only stopped the
+    process of the pid file, but the .exe made by PyInstaller runs as two processes (a launcher and the agent) and both
+    keep the file open: copying the new version failed with "WinError 32 ... being used by another process". This one
+    and the process that launched it are never touched (the installer may be the installed program itself).
+    """
+    find = find or processes_running_from
+    terminate = terminate or terminate_process
+    mine = {os.getpid(), os.getppid()}
+    targets = set(find(paths.exe))
     try:
-        pid = int(paths.pid.read_text(encoding="ascii").strip())
+        targets.add(int(paths.pid.read_text(encoding="ascii").strip()))
     except (OSError, ValueError):
-        return
-    if pid == os.getpid():
-        return
+        pass
+    for pid in sorted(targets - mine):
+        if pid in set(find(paths.exe)) or _is_agent(pid):
+            terminate(pid)
+
+
+def _is_agent(pid: int) -> bool:
+    """The pid file may be old: the pid is stopped only if it is still the agent."""
+    if os.name != "nt":
+        return False
     listing = subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"], capture_output=True,
                              text=True, creationflags=NO_WINDOW).stdout
-    if EXE_NAME.lower() in listing.lower():
-        subprocess.run(["taskkill", "/PID", str(pid), "/F"], capture_output=True, creationflags=NO_WINDOW)
+    return EXE_NAME.lower() in listing.lower()
+
+
+PROCESS_TERMINATE = 0x0001
+PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+SYNCHRONIZE = 0x00100000
+
+
+def _kernel32():
+    import ctypes  # noqa: PLC0415 - solo en Windows
+    from ctypes import wintypes  # noqa: PLC0415
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.K32EnumProcesses.argtypes = [ctypes.POINTER(wintypes.DWORD), wintypes.DWORD,
+                                          ctypes.POINTER(wintypes.DWORD)]
+    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.QueryFullProcessImageNameW.argtypes = [wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR,
+                                                    ctypes.POINTER(wintypes.DWORD)]
+    kernel32.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
+    kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    return ctypes, wintypes, kernel32
+
+
+def processes_running_from(exe: Path) -> list[int]:
+    """Processes whose program is exactly this file (any user's own process; none outside Windows)."""
+    if os.name != "nt":
+        return []
+    ctypes, wintypes, kernel32 = _kernel32()
+    size = 4096
+    while True:
+        pids = (wintypes.DWORD * size)()
+        needed = wintypes.DWORD()
+        if not kernel32.K32EnumProcesses(pids, ctypes.sizeof(pids), ctypes.byref(needed)):
+            return []
+        if needed.value < ctypes.sizeof(pids):
+            break
+        size *= 2
+    # Compared as files, not as text: the same folder can be written with a short name (C:\Users\RUNNER~1).
+    target_name = os.path.normcase(exe.name)
+    found = []
+    for pid in pids[:needed.value // ctypes.sizeof(wintypes.DWORD)]:
+        if not pid:
+            continue
+        handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if not handle:
+            continue
+        try:
+            name = ctypes.create_unicode_buffer(32768)
+            length = wintypes.DWORD(len(name))
+            if (kernel32.QueryFullProcessImageNameW(handle, 0, name, ctypes.byref(length))
+                    and os.path.normcase(os.path.basename(name.value)) == target_name
+                    and _same_file(name.value, exe)):
+                found.append(int(pid))
+        finally:
+            kernel32.CloseHandle(handle)
+    return found
+
+
+def _same_file(path: str, exe: Path) -> bool:
+    try:
+        return os.path.samefile(path, exe)
+    except OSError:
+        return False
+
+
+def terminate_process(pid: int, wait_ms: int = 5000) -> None:
+    """Ends the process and waits until it is really gone (only then Windows releases its program file)."""
+    if os.name != "nt":
+        return
+    _ctypes, _wintypes, kernel32 = _kernel32()
+    handle = kernel32.OpenProcess(PROCESS_TERMINATE | SYNCHRONIZE, False, pid)
+    if not handle:
+        return
+    try:
+        kernel32.TerminateProcess(handle, 1)
+        kernel32.WaitForSingleObject(handle, wait_ms)
+    finally:
+        kernel32.CloseHandle(handle)
 
 
 def schedule_folder_removal(folder: Path) -> None:
