@@ -6,9 +6,9 @@ name: Agente para Windows
 on:
   push:
     branches: [main]
-    paths: ["agent/**", "tests/test_agent.py", ".github/workflows/agente-windows.yml"]
+    paths: ["agent/**", "tests/test_agent.py", "tests/test_windows_install.py", ".github/workflows/agente-windows.yml"]
   pull_request:
-    paths: ["agent/**", "tests/test_agent.py", ".github/workflows/agente-windows.yml"]
+    paths: ["agent/**", "tests/test_agent.py", "tests/test_windows_install.py", ".github/workflows/agente-windows.yml"]
   workflow_dispatch:
 
 permissions:
