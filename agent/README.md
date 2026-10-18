@@ -4,6 +4,11 @@ Programa que corre en un computador de tu casa, mide la red Wi-Fi y envía un re
 Con esos reportes la IA te dice **cuántos equipos están conectados**, si apareció uno nuevo, qué tan segura es tu red
 (auditoría de seguridad) y si hay anomalías en la conexión.
 
+El mismo programa es el **sensor de las redes del equipo**: en el panel, **Redes → (la red) → Conectar sensor** muestra
+un código de 8 caracteres; se instala igual, en un computador conectado a esa red, y desde entonces sus reportes son
+las mediciones reales de esa red (latencia, pérdida, señal, velocidad del enlace, equipos y tráfico). El código
+decide para cuál red trabaja: uno de Mi Wi-Fi la conecta con la casa del usuario; uno del panel, con la red del equipo.
+
 ## Instalación en Windows (sin Python)
 
 1. En WiFiSense entra a **Mi Wi-Fi → Agente WiFiSense → Instalar agente**. La página muestra un código de 8
@@ -62,6 +67,7 @@ Si Windows no deja leer los datos del Wi-Fi: Configuración → Privacidad y seg
 | Nombre de cada equipo | DNS inverso, NetBIOS (Windows) y mDNS/Bonjour (iPhone, Mac, Chromecast, impresoras) |
 | MAC privada | bit de «administración local»: celulares y tabletas que usan una MAC aleatoria en cada red |
 | Puertos abiertos en el router | intento de conexión a 21, 22, 23, 53, 80, 443, 445, 1900, 7547, 8080 y 8443 |
+| Tráfico de este computador (desde 1.4.0) | contadores del sistema desde el reporte anterior: bytes y paquetes de la tarjeta Wi-Fi (o de cable) y paquetes TCP, UDP e ICMP. En Windows con la API IP Helper (`GetIfTable2`, `GetTcpStatisticsEx`…), igual en cualquier idioma; en Linux de `/proc/net/dev` y `/proc/net/snmp`. No se instala ningún programa de captura |
 
 ## Privacidad y seguridad
 
@@ -72,5 +78,9 @@ Si Windows no deja leer los datos del Wi-Fi: Configuración → Privacidad y seg
 - La clave solo viaja por HTTPS (el agente rechaza `http://` salvo `localhost`, para pruebas). En el servidor se
   guarda solo su SHA-256; si la pierdes o se filtra, revócala en Mi Wi-Fi → Agente y crea otra.
 - El agente no ataca ni cambia nada: solo lee datos del sistema e intenta conexiones normales.
+- Del tráfico solo se envían **totales** (cuántos bytes y paquetes, y de qué protocolo), nunca a dónde ni qué
+  contenía. Es el tráfico de ese computador, no el de toda la red (eso solo lo ve el router), y solo se guarda cuando
+  el agente es el sensor de una red del equipo. Los contadores del último envío quedan en
+  `%APPDATA%\WiFiSense\traffic.json`.
 
 Variables opcionales: `WIFISENSE_AGENT_KEY` y `WIFISENSE_SERVER` reemplazan lo guardado por `pair` (o por `setup`, que acepta una clave larga de versiones anteriores).

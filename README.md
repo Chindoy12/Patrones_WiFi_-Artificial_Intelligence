@@ -209,6 +209,11 @@ docker build -t wifisense-ai . && docker run -p 8000:8000 -e AI_API_KEY=... wifi
 tráfico por timestamp y llama a `POST /api/v1/anomalies/detect` mediante `AiAnalysisClient`. El backend guarda la
 respuesta en `ai_predictions`, actualiza el estado de la red y genera alertas si corresponde.
 
+El agente (`agent/`) también es el **sensor de las redes del equipo**: con un código del panel, sus reportes llegan al
+backend como mediciones reales de esa red (fuente `AGENT`), con el tráfico del computador y sus paquetes por protocolo,
+y el backend corre sobre ellas el mismo análisis por umbrales del monitoreo. El instalador se prueba en Windows real en
+cada Pull Request que cambie el agente (`.github/workflows/agente-windows.yml`) y se publica al llegar a `main`.
+
 ## Pendiente
 
 Reentrenamiento y evaluación con mediciones reales del agente, variables que separen la red local de internet,
