@@ -1,7 +1,8 @@
 """Ventana del instalador del agente WiFiSense (tkinter, incluido en Python; no hay que instalar nada).
 
-La persona ve qué hace el agente antes de instalarlo, escribe el código de Mi Wi-Fi y decide si arranca con
-Windows. Si el agente ya está instalado, la misma ventana permite conectarlo a otra red o desinstalarlo.
+La persona ve qué hace el agente antes de instalarlo, escribe el código (de Mi Wi-Fi o, para una red del equipo, de
+Redes > Sensor) y decide si arranca con Windows. Si el agente ya está instalado, la misma ventana permite conectarlo a
+otra red con un código nuevo o desinstalarlo.
 """
 from __future__ import annotations
 
@@ -12,9 +13,11 @@ from tkinter import messagebox, ttk
 try:  # como paquete (pruebas) o como script suelto (PyInstaller)
     from agent import windows_install as setup
     from agent import wifisense_agent as agent
+    from agent.installation import install_and_pair
 except ImportError:  # pragma: no cover
     import windows_install as setup
     import wifisense_agent as agent
+    from installation import install_and_pair
 
 BLUE = "#3b6cf6"
 INK = "#1b2a41"
@@ -22,13 +25,17 @@ MUTED = "#6b7a90"
 SKY = "#eef6fb"
 
 EXPLANATION = (
-    "El agente mide tu red Wi-Fi cada 5 minutos y envía el resultado a tu cuenta de WiFiSense:\n"
+    "El agente mide la red Wi-Fi de este computador cada 5 minutos y envía el resultado a WiFiSense:\n"
     "  • cuántos equipos están conectados y si aparece uno nuevo,\n"
     "  • la seguridad del Wi-Fi y del router,\n"
     "  • la calidad de la conexión.\n\n"
     "Las direcciones MAC de los equipos no salen de este computador. Puedes desinstalarlo cuando quieras desde "
     "Configuración > Aplicaciones."
 )
+
+
+CODE_HELP = ("Para tu casa: Mi Wi-Fi > Agente WiFiSense. Para una red del equipo: Redes > Sensor. "
+             "Este computador mide la red Wi-Fi a la que está conectado; un código nuevo lo cambia de red.")
 
 
 class InstallerWindow:
@@ -49,8 +56,10 @@ class InstallerWindow:
     def install_view(self) -> None:
         tk.Label(self.root, text=EXPLANATION, justify="left", wraplength=440, fg=INK, bg=SKY,
                  font=("Segoe UI", 10)).pack(anchor="w", pady=(8, 14))
-        tk.Label(self.root, text="Código de instalación (Mi Wi-Fi > Agente WiFiSense > Instalar agente)",
-                 fg=INK, bg=SKY, font=("Segoe UI", 10, "bold")).pack(anchor="w")
+        tk.Label(self.root, text="Código de instalación", fg=INK, bg=SKY,
+                 font=("Segoe UI", 10, "bold")).pack(anchor="w")
+        tk.Label(self.root, text=CODE_HELP, fg=MUTED, bg=SKY, wraplength=440, justify="left",
+                 font=("Segoe UI", 9)).pack(anchor="w")
         self.code = tk.StringVar()
         entry = ttk.Entry(self.root, textvariable=self.code, font=("Consolas", 16), width=14, justify="center")
         entry.pack(anchor="w", pady=(4, 10))
@@ -90,21 +99,12 @@ class InstallerWindow:
         threading.Thread(target=self._install, args=(code, self.autostart.get()), daemon=True).start()
 
     def _install(self, code: str, autostart: bool) -> None:
-        try:
-            server = agent.load_config()["server"]
-            answer = agent.pair(code, server)
-            agent.save_pairing(answer, server)
-            setup.stop_running_agent(self.paths)  # un agente anterior puede estar corriendo desde la carpeta que se reemplaza
-            exe = setup.install(setup.current_executable(), self.paths, self.registry, agent.AGENT_VERSION, autostart)
-            setup.start_agent(self.paths)
-        except agent.SendError as error:
-            self.root.after(0, self._failed, f"No se pudo instalar: {error}.")
-            return
-        except OSError as error:
-            self.root.after(0, self._failed, f"No se pudo copiar el programa: {error}.")
-            return
-        network = answer.get("networkName") or "tu red"
-        self.root.after(0, self._done, network, exe)
+        outcome = install_and_pair(code, autostart, self.paths, self.registry)
+        if isinstance(outcome, str):
+            self.root.after(0, self._failed, outcome)
+        else:
+            network, exe = outcome
+            self.root.after(0, self._done, network, exe)
 
     def _failed(self, message: str) -> None:
         self.say(message, error=True)
@@ -112,7 +112,7 @@ class InstallerWindow:
 
     def _done(self, network: str, exe) -> None:
         messagebox.showinfo("Agente WiFiSense", f"Listo. El agente ya está midiendo «{network}» y en un momento "
-                            "verás los datos en Mi Wi-Fi.\n\nPuedes cerrar esta ventana.")
+                            "verás los datos en WiFiSense.\n\nPuedes cerrar esta ventana.")
         self.root.destroy()
 
     def reinstall(self) -> None:
