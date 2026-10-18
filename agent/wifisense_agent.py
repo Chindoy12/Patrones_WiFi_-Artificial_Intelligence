@@ -17,6 +17,8 @@ Qué mide y qué envía:
     para que los reconozcas como en el Bluetooth. Las direcciones MAC NO salen de tu computador: se envía una huella
     SHA-256 con una sal aleatoria propia de esta instalación.
   * Qué puertos de administración del router aceptan conexiones (solo se intenta conectar, no se envían datos).
+  * El tráfico de este computador desde el reporte anterior (bytes y paquetes por protocolo TCP, UDP e ICMP), leído
+    de los contadores del sistema. Solo se guarda cuando el agente es el sensor de una red del equipo WiFiSense.
 """
 from __future__ import annotations
 
@@ -44,7 +46,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Callable, Optional
 
-AGENT_VERSION = "1.3.0"
+AGENT_VERSION = "1.4.0"
 DEFAULT_SERVER = "https://patroneswifibackend-production.up.railway.app"
 REPORT_PATH = "/api/agent/reports"
 PAIR_PATH = "/api/agent/pair"
@@ -666,6 +668,206 @@ def open_ports(host: str, ports=ROUTER_PORTS, timeout: float = 0.8) -> list[int]
         return [port for port, ok in zip(ports, pool.map(is_open, ports)) if ok]
 
 
+# ------------------------------------------------------------------------------------------------------ tráfico
+# Contadores del sistema operativo (sin programas de captura): bytes y paquetes de la tarjeta de red y paquetes por
+# protocolo. El agente envía cuánto cambiaron desde el reporte anterior. Solo el sensor de una red del equipo los
+# guarda; son el tráfico de ESTE computador, no el de toda la red (eso solo lo ve el router).
+TRAFFIC_MAX_AGE = 3600          # si el reporte anterior es más viejo (equipo apagado), no se mezcla ese tiempo
+WRAP_32 = 2 ** 32
+SKIP_INTERFACES = ("lo", "docker", "veth", "br-", "virbr", "vmnet", "tun", "tailscale")
+
+
+def parse_proc_net_dev(text: str) -> dict[str, int]:
+    """Bytes y paquetes de /proc/net/dev (Linux), sumando las tarjetas reales (sin loopback ni puentes)."""
+    totals = {"bytes.in": 0, "bytes.out": 0, "packets.in": 0, "packets.out": 0}
+    found = False
+    for line in text.splitlines()[2:]:
+        if ":" not in line:
+            continue
+        name, data = line.split(":", 1)
+        name = name.strip()
+        values = data.split()
+        if len(values) < 10 or name.startswith(SKIP_INTERFACES):
+            continue
+        found = True
+        totals["bytes.in"] += int(values[0])
+        totals["packets.in"] += int(values[1])
+        totals["bytes.out"] += int(values[8])
+        totals["packets.out"] += int(values[9])
+    return totals if found else {}
+
+
+def parse_proc_net_snmp(snmp: str, snmp6: str = "") -> dict[str, int]:
+    """Paquetes por protocolo de /proc/net/snmp y /proc/net/snmp6 (Linux)."""
+    wanted = {"Tcp": ("InSegs", "OutSegs", "TCP"), "Udp": ("InDatagrams", "OutDatagrams", "UDP"),
+              "Icmp": ("InMsgs", "OutMsgs", "ICMP")}
+    counters: dict[str, int] = {}
+    lines = snmp.splitlines()
+    for header, values in zip(lines, lines[1:]):
+        prefix = header.split(":", 1)[0]
+        if prefix not in wanted or not values.startswith(prefix + ":") or header == values:
+            continue
+        row = dict(zip(header.split()[1:], values.split()[1:]))
+        received, sent, protocol = wanted[prefix]
+        if received in row and sent in row and row[received].isdigit():
+            counters[f"{protocol}.in4"] = int(row[received])
+            counters[f"{protocol}.out4"] = int(row[sent])
+    for line in snmp6.splitlines():
+        parts = line.split()
+        names = {"Udp6InDatagrams": "UDP.in6", "Udp6OutDatagrams": "UDP.out6",
+                 "Icmp6InMsgs": "ICMP.in6", "Icmp6OutMsgs": "ICMP.out6"}
+        if len(parts) == 2 and parts[0] in names and parts[1].isdigit():
+            counters[names[parts[0]]] = int(parts[1])
+    return counters
+
+
+def linux_counters() -> dict[str, int]:
+    counters = parse_proc_net_dev(read_file("/proc/net/dev"))
+    counters.update(parse_proc_net_snmp(read_file("/proc/net/snmp"), read_file("/proc/net/snmp6")))
+    return counters
+
+
+def windows_counters() -> dict[str, int]:
+    """Contadores de Windows con la API IP Helper (iphlpapi.dll), igual en cualquier idioma del sistema."""
+    import ctypes
+    from ctypes import wintypes
+
+    u64, enum = ctypes.c_uint64, ctypes.c_int
+
+    class MibIfRow2(ctypes.Structure):  # MIB_IF_ROW2 de netioapi.h: 1352 bytes
+        _fields_ = [("InterfaceLuid", u64), ("InterfaceIndex", wintypes.ULONG), ("InterfaceGuid", ctypes.c_ubyte * 16),
+                    ("Alias", ctypes.c_wchar * 257), ("Description", ctypes.c_wchar * 257),
+                    ("PhysicalAddressLength", wintypes.ULONG), ("PhysicalAddress", ctypes.c_ubyte * 32),
+                    ("PermanentPhysicalAddress", ctypes.c_ubyte * 32), ("Mtu", wintypes.ULONG),
+                    ("Type", wintypes.ULONG), ("TunnelType", enum), ("MediaType", enum),
+                    ("PhysicalMediumType", enum), ("AccessType", enum), ("DirectionType", enum),
+                    ("Flags", ctypes.c_ubyte), ("OperStatus", enum), ("AdminStatus", enum),
+                    ("MediaConnectState", enum), ("NetworkGuid", ctypes.c_ubyte * 16), ("ConnectionType", enum),
+                    ("TransmitLinkSpeed", u64), ("ReceiveLinkSpeed", u64)]
+        _fields_ += [(name, u64) for name in (
+            "InOctets", "InUcastPkts", "InNUcastPkts", "InDiscards", "InErrors", "InUnknownProtos", "InUcastOctets",
+            "InMulticastOctets", "InBroadcastOctets", "OutOctets", "OutUcastPkts", "OutNUcastPkts", "OutDiscards",
+            "OutErrors", "OutUcastOctets", "OutMulticastOctets", "OutBroadcastOctets", "OutQLen")]
+
+    class MibTcpStats(ctypes.Structure):
+        _fields_ = [(name, wintypes.DWORD) for name in (
+            "RtoAlgorithm", "RtoMin", "RtoMax", "MaxConn", "ActiveOpens", "PassiveOpens", "AttemptFails",
+            "EstabResets", "CurrEstab", "InSegs", "OutSegs", "RetransSegs", "InErrs", "OutRsts", "NumConns")]
+
+    class MibUdpStats(ctypes.Structure):
+        _fields_ = [(name, wintypes.DWORD) for name in (
+            "InDatagrams", "NoPorts", "InErrors", "OutDatagrams", "NumAddrs")]
+
+    class MibIcmpStats(ctypes.Structure):
+        _fields_ = [(name, wintypes.DWORD) for name in (
+            "Msgs", "Errors", "DestUnreachs", "TimeExcds", "ParmProbs", "SrcQuenchs", "Redirects", "Echos",
+            "EchoReps", "Timestamps", "TimestampReps", "AddrMasks", "AddrMaskReps")]
+
+    class MibIcmp(ctypes.Structure):
+        _fields_ = [("In", MibIcmpStats), ("Out", MibIcmpStats)]
+
+    if ctypes.sizeof(MibIfRow2) != 1352:  # una estructura mal descrita leería basura: mejor no enviar nada
+        return {}
+    api = ctypes.WinDLL("iphlpapi.dll")
+    counters: dict[str, int] = {}
+
+    table = ctypes.c_void_p()
+    if api.GetIfTable2(ctypes.byref(table)) == 0:
+        try:
+            count = ctypes.cast(table, ctypes.POINTER(wintypes.ULONG))[0]
+            rows = ctypes.cast(table.value + 8, ctypes.POINTER(MibIfRow2 * count)).contents
+            # Tarjetas físicas conectadas (no filtros ni virtuales); el Wi-Fi si lo hay, si no la de cable.
+            physical = [row for row in rows if row.Flags & 1 and not row.Flags & 2 and row.OperStatus == 1]
+            chosen = [row for row in physical if row.Type == 71] or [row for row in physical if row.Type == 6]
+            if chosen:
+                counters["bytes.in"] = sum(row.InOctets for row in chosen)
+                counters["bytes.out"] = sum(row.OutOctets for row in chosen)
+                counters["packets.in"] = sum(row.InUcastPkts + row.InNUcastPkts for row in chosen)
+                counters["packets.out"] = sum(row.OutUcastPkts + row.OutNUcastPkts for row in chosen)
+        finally:
+            api.FreeMibTable(table)
+
+    for family, suffix in ((2, "4"), (23, "6")):  # AF_INET, AF_INET6; estos contadores son de 32 bits
+        tcp, udp = MibTcpStats(), MibUdpStats()
+        if api.GetTcpStatisticsEx(ctypes.byref(tcp), family) == 0:
+            counters[f"TCP.in{suffix}"], counters[f"TCP.out{suffix}"] = tcp.InSegs, tcp.OutSegs
+        if api.GetUdpStatisticsEx(ctypes.byref(udp), family) == 0:
+            counters[f"UDP.in{suffix}"], counters[f"UDP.out{suffix}"] = udp.InDatagrams, udp.OutDatagrams
+    icmp = MibIcmp()
+    if api.GetIcmpStatistics(ctypes.byref(icmp)) == 0:
+        counters["ICMP.in4"], counters["ICMP.out4"] = icmp.In.Msgs, icmp.Out.Msgs
+    return counters
+
+
+def traffic_counters() -> dict[str, int]:
+    """Contadores actuales; vacío si el sistema no los entrega (entonces el reporte va sin tráfico)."""
+    try:
+        return windows_counters() if IS_WINDOWS else linux_counters()
+    except (OSError, AttributeError, ValueError) as error:
+        print(f"  aviso: no se pudo leer el tráfico: {error}", file=sys.stderr)
+        return {}
+
+
+def counter_delta(now: int, before: int, name: str) -> Optional[int]:
+    """Cuánto avanzó un contador. Los de protocolos de Windows son de 32 bits y dan la vuelta; un contador que
+    retrocede de verdad (el computador se reinició) no da un valor confiable."""
+    if now >= before:
+        return now - before
+    if not name.startswith("bytes") and not name.startswith("packets") and before - now > WRAP_32 // 2:
+        return now + WRAP_32 - before
+    return None
+
+
+def traffic_fields(previous: Optional[dict], current: dict, now: Optional[float] = None) -> dict:
+    """Campos del reporte con el tráfico desde el reporte anterior; vacío la primera vez o si algo no cuadra."""
+    now = time.time() if now is None else now
+    if not previous or not current or now - previous.get("at", 0) > TRAFFIC_MAX_AGE:
+        return {}
+    counters = previous.get("counters", {})
+    deltas: dict[str, int] = {}
+    for name, value in current.items():
+        if name in counters:
+            delta = counter_delta(value, counters[name], name)
+            if delta is None:
+                return {}
+            deltas[name] = delta
+    fields: dict = {}
+    if all(f"{kind}.{way}" in deltas for kind in ("bytes", "packets") for way in ("in", "out")):
+        fields["trafficBytes"] = min(deltas["bytes.in"] + deltas["bytes.out"], 10 ** 13)
+        fields["trafficPackets"] = min(deltas["packets.in"] + deltas["packets.out"], 10 ** 11)
+    protocols = []
+    for protocol in ("TCP", "UDP", "ICMP"):
+        values = [value for name, value in deltas.items() if name.startswith(protocol + ".")]
+        if values:
+            protocols.append({"protocol": protocol, "packets": min(sum(values), 10 ** 11)})
+    if protocols:
+        fields["protocolPackets"] = protocols
+    return fields
+
+
+def traffic_state_path() -> Path:
+    return config_path().with_name("traffic.json")
+
+
+def load_traffic_state(path: Optional[Path] = None) -> Optional[dict]:
+    try:
+        return json.loads((path or traffic_state_path()).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def save_traffic_state(counters: dict, path: Optional[Path] = None, now: Optional[float] = None) -> None:
+    """Guarda los contadores del último reporte enviado. Si un envío falla no se guardan, y el siguiente reporte
+    incluye también ese intervalo."""
+    path = path or traffic_state_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"at": time.time() if now is None else now, "counters": counters}),
+                        encoding="utf-8")
+    except OSError as error:
+        print(f"  aviso: no se pudo guardar el tráfico: {error}", file=sys.stderr)
+
+
 # ------------------------------------------------------------------------------------------------------ reporte
 
 def collect(salt: str) -> dict:
@@ -874,6 +1076,11 @@ def describe(report: dict) -> str:
              f"pérdida {report.get('packetLossPct', '?')} %   Router: {report.get('gatewayLatencyMs', '?')} ms",
              f"  Equipos conectados: {report['deviceCount']}   Puertos abiertos en el router: "
              f"{', '.join(map(str, report['openPorts'])) or 'ninguno de los revisados'}"]
+    if "trafficBytes" in report:
+        protocols = ", ".join(f"{p['protocol']} {p['packets']}" for p in report.get("protocolPackets", []))
+        lines.append(f"  Tráfico de este computador desde el reporte anterior: "
+                     f"{report['trafficBytes'] / 1048576:.1f} MB, {report['trafficPackets']} paquetes"
+                     + (f" ({protocols})" if protocols else ""))
     if report.get("wifiNote") == "LOCATION_PERMISSION":
         lines.append("  Windows no deja leer el Wi-Fi: Configuración > Privacidad > Ubicación > activa "
                      "'Permitir que las aplicaciones de escritorio accedan a tu ubicación'.")
@@ -945,11 +1152,15 @@ def command_run(args) -> int:
     while True:
         print(time.strftime("[%H:%M:%S] Midiendo..."))
         report = collect(salt)
+        counters = traffic_counters()
+        report.update(traffic_fields(load_traffic_state(), counters))
         print(describe(report))
         wait, sent = interval, False
         try:
             answer = send(report, config["server"], config["key"])
             sent = True
+            if counters:
+                save_traffic_state(counters)
             print(f"  Enviado. {answer.get('summary', '')}".rstrip())
         except SendError as error:
             print(f"  No se envió: {error}")
