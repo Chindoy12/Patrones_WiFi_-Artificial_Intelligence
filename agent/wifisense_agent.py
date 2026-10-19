@@ -46,7 +46,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Callable, Optional
 
-AGENT_VERSION = "1.5.0"
+AGENT_VERSION = "1.6.0"
 DEFAULT_SERVER = "https://patroneswifibackend-production.up.railway.app"
 REPORT_PATH = "/api/agent/reports"
 PAIR_PATH = "/api/agent/pair"
@@ -856,14 +856,16 @@ def load_traffic_state(path: Optional[Path] = None) -> Optional[dict]:
         return None
 
 
-def save_traffic_state(counters: dict, path: Optional[Path] = None, now: Optional[float] = None) -> None:
+def save_traffic_state(counters: dict, path: Optional[Path] = None, now: Optional[float] = None,
+                       network: Optional[str] = None) -> None:
     """Guarda los contadores del último reporte enviado. Si un envío falla no se guardan, y el siguiente reporte
-    incluye también ese intervalo."""
+    incluye también ese intervalo. ``network`` (el inicio de la clave) evita mezclar el tráfico de dos redes cuando
+    el computador cambia de Wi-Fi."""
     path = path or traffic_state_path()
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps({"at": time.time() if now is None else now, "counters": counters}),
-                        encoding="utf-8")
+        path.write_text(json.dumps({"at": time.time() if now is None else now, "counters": counters,
+                                    "network": network}), encoding="utf-8")
     except OSError as error:
         print(f"  aviso: no se pudo guardar el tráfico: {error}", file=sys.stderr)
 
@@ -1054,16 +1056,103 @@ def pair(code: str, server: str, opener=urllib.request.urlopen) -> dict:
     return answer
 
 
-def save_pairing(answer: dict, server: str, path: Optional[Path] = None) -> Path:
-    """Guarda la clave recibida (y una sal nueva si no había) solo para el usuario actual."""
+# ------------------------------------------------------------------------------------------- varias redes (1.6.0)
+#
+# Un computador puede tener el código de varias redes (por ejemplo los dos Wi-Fi de una casa, o el de la casa y el de
+# la universidad). Cada clave queda ligada al Wi-Fi al que estaba conectado el computador cuando se usó el código, y en
+# cada reporte el agente usa la clave del Wi-Fi en el que está: si cambias de Wi-Fi, el agente cambia de red solo. En
+# un Wi-Fi sin código no envía nada, para no guardar sus mediciones como si fueran de otra red.
+
+def config_networks(config: dict) -> list[dict]:
+    """Las redes de este computador: [{key, network, ssid}]. Lee también la configuración de antes de 1.6.0 (una sola
+    clave, sin Wi-Fi) y la clave de la variable de entorno WIFISENSE_AGENT_KEY (desarrollo)."""
+    if os.environ.get("WIFISENSE_AGENT_KEY"):
+        return [{"key": os.environ["WIFISENSE_AGENT_KEY"], "network": None, "ssid": None}]
+    networks = config.get("networks")
+    if isinstance(networks, list):
+        return [n for n in networks if isinstance(n, dict) and n.get("key")]
+    if config.get("key"):
+        return [{"key": config["key"], "network": config.get("network"), "ssid": config.get("ssid")}]
+    return []
+
+
+def choose_network(networks: list[dict], ssid: Optional[str]) -> Optional[dict]:
+    """La red a la que pertenece el Wi-Fi actual. Una clave sin Wi-Fi conocido (instalada antes de 1.6.0, o sin
+    permiso de ubicación) sirve para cualquier Wi-Fi que no tenga su propia clave, y lo aprende la primera vez (ver
+    learn_ssid). Sin poder leer el Wi-Fi (cable o permiso) solo se envía si no hay duda de cuál red es."""
+    if ssid:
+        for network in networks:
+            if network.get("ssid") == ssid:
+                return network
+    wildcards = [n for n in networks if not n.get("ssid")]
+    if len(wildcards) == 1:
+        return wildcards[0]
+    if not ssid and len(networks) == 1:
+        return networks[0]
+    return None
+
+
+def store_networks(networks: list[dict], path: Optional[Path] = None, server: Optional[str] = None) -> Path:
+    """Escribe las redes (y quita las claves sueltas del formato anterior)."""
     path = path or config_path()
     try:
         config = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         config = {}
-    config.update(server=validate_server(server), key=answer["key"], network=answer.get("networkName"))
+    for old in ("key", "network", "ssid"):
+        config.pop(old, None)
+    if server:
+        config["server"] = validate_server(server)
+    config["networks"] = [{"key": n["key"], "network": n.get("network"), "ssid": n.get("ssid")} for n in networks]
     config.setdefault("salt", secrets.token_hex(16))
     return save_config(config, path)
+
+
+def learn_ssid(network: dict, ssid: Optional[str], path: Optional[Path] = None) -> None:
+    """Una clave sin Wi-Fi queda ligada al primer Wi-Fi en que se usa (el de su red, en una instalación anterior)."""
+    if not ssid or network.get("ssid") or os.environ.get("WIFISENSE_AGENT_KEY"):
+        return
+    networks = config_networks(load_config(path))
+    for stored in networks:
+        if stored["key"] == network["key"]:
+            stored["ssid"] = network["ssid"] = ssid
+    store_networks(networks, path)
+
+
+def forget_network(network: dict, path: Optional[Path] = None) -> list[dict]:
+    """Quita una clave revocada (por ejemplo, la red se desconectó desde la página); devuelve las que quedan."""
+    networks = [n for n in config_networks(load_config(path)) if n["key"] != network["key"]]
+    if not os.environ.get("WIFISENSE_AGENT_KEY"):
+        store_networks(networks, path)
+    return networks
+
+
+def current_ssid() -> Optional[str]:
+    """El Wi-Fi al que está conectado este computador ahora; None si no se puede leer (cable o permiso)."""
+    try:
+        return wifi_info().get("ssid")
+    except Exception:  # leer el Wi-Fi nunca debe impedir instalar
+        return None
+
+
+def save_pairing(answer: dict, server: str, path: Optional[Path] = None, ssid: Optional[str] = None) -> Path:
+    """Agrega la clave recibida a las redes de este computador, ligada al Wi-Fi actual (``ssid``). Un código nuevo
+    para el mismo Wi-Fi reemplaza la clave anterior de ese Wi-Fi; las de otros Wi-Fi se conservan."""
+    path = path or config_path()
+    try:
+        config = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        config = {}
+    networks = [n for n in config_networks(config) if n.get("ssid") != ssid]
+    networks.append({"key": answer["key"], "network": answer.get("networkName"), "ssid": ssid})
+    return store_networks(networks, path, server)
+
+
+def describe_networks(networks: list[dict]) -> str:
+    """'«Casa» en Casa-5G; «Laboratorio» en Lab-Redes' para mostrar qué mide este computador."""
+    parts = [f"«{n.get('network') or 'sin nombre'}» " + (f"en {n['ssid']}" if n.get("ssid") else "en cualquier Wi-Fi")
+             for n in networks]
+    return "; ".join(parts) if parts else "ninguna red"
 
 
 # ---------------------------------------------------------------------------------------------- línea de comandos
@@ -1109,13 +1198,16 @@ def command_setup(_args) -> int:
 
 def command_pair(args) -> int:
     config = load_config()
-    code = args.code or input("Código de instalación (Mi Wi-Fi > Agente WiFiSense > Instalar agente): ")
+    code = args.code or input("Código de instalación (Mi Wi-Fi > Agente WiFiSense, o Redes > Sensor): ")
     try:
         answer = pair(code, config["server"])
     except SendError as error:
         print(f"Error: {error}")
         return 1
-    print(f"Conectado con la red «{answer.get('networkName', '')}». Guardado en {save_pairing(answer, config['server'])}")
+    ssid = current_ssid()
+    saved = save_pairing(answer, config["server"], ssid=ssid)
+    where = f" cuando este computador esté en «{ssid}»" if ssid else ""
+    print(f"Conectado con la red «{answer.get('networkName', '')}»{where}. Guardado en {saved}")
     print("Ahora ejecuta: python wifisense_agent.py run")
     return 0
 
@@ -1144,29 +1236,45 @@ def command_scan(_args) -> int:
 
 def command_run(args) -> int:
     config = load_config()
-    if not config.get("key"):
-        print("Primero ejecuta: python wifisense_agent.py setup")
+    if not config_networks(config):
+        print("Primero ejecuta: python wifisense_agent.py pair CODIGO")
         return 2
     salt = ensure_salt(config)
     interval = max(args.interval, MIN_INTERVAL)
     while True:
+        config = load_config()  # un código nuevo (otra red) se usa sin reiniciar el agente
+        networks = config_networks(config)
         print(time.strftime("[%H:%M:%S] Midiendo..."))
         report = collect(salt)
-        counters = traffic_counters()
-        report.update(traffic_fields(load_traffic_state(), counters))
-        print(describe(report))
+        ssid = report.get("ssid")
+        network = choose_network(networks, ssid)
         wait, sent = interval, False
-        try:
-            answer = send(report, config["server"], config["key"])
-            sent = True
-            if counters:
-                save_traffic_state(counters)
-            print(f"  Enviado. {answer.get('summary', '')}".rstrip())
-        except SendError as error:
-            print(f"  No se envió: {error}")
-            if error.fatal:
-                return 1
-            wait = max(interval, error.retry_after or 0)
+        if network is None:
+            print(f"  No se envió: este computador está en «{ssid}», que no tiene código aquí. Mide: "
+                  f"{describe_networks(networks)}." if ssid else
+                  "  No se envió: no se pudo leer el Wi-Fi y este computador tiene códigos de varias redes.")
+        else:
+            learn_ssid(network, ssid)
+            tag = network["key"][:12]
+            counters = traffic_counters()
+            previous = load_traffic_state()
+            if previous and previous.get("network") not in (None, tag):
+                previous = None  # el reporte anterior fue de otra red: su tráfico no es de esta
+            report.update(traffic_fields(previous, counters))
+            print(describe(report))
+            try:
+                answer = send(report, config["server"], network["key"])
+                sent = True
+                if counters:
+                    save_traffic_state(counters, network=tag)
+                print(f"  Enviado a «{network.get('network') or 'tu red'}». {answer.get('summary', '')}".rstrip())
+            except SendError as error:
+                print(f"  No se envió: {error}")
+                if error.fatal:
+                    if not forget_network(network):
+                        return 1
+                    print("  Se quitó esa red de este computador; las demás siguen.")
+                wait = max(interval, error.retry_after or 0)
         if args.once:
             return 0 if sent else 1
         time.sleep(wait)

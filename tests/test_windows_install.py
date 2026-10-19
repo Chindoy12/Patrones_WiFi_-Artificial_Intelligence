@@ -124,7 +124,8 @@ def test_pairing_exchanges_the_code_for_the_key_and_saves_it_privately(tmp_path)
 
     assert sent == {"url": "https://wifisense.example.com/api/agent/pair", "body": {"code": "K7QM-4RZD"}, "key": None}
     saved = json.loads(path.read_text())
-    assert saved["key"] == "wsa_" + "k" * 43 and saved["network"] == "Casa" and len(saved["salt"]) == 32
+    assert saved["networks"] == [{"key": "wsa_" + "k" * 43, "network": "Casa", "ssid": None}]
+    assert len(saved["salt"]) == 32
     if os.name != "nt":
         assert path.stat().st_mode & 0o777 == 0o600
 
@@ -222,7 +223,9 @@ def configured(monkeypatch, paths):
     paths.exe.write_bytes(b"MZ")
     saved = []
     monkeypatch.setattr(agent, "load_config", lambda: {"server": "https://wifisense.example.com", "key": "wsa_old"})
-    monkeypatch.setattr(agent, "save_pairing", lambda answer, server: saved.append(answer["networkName"]))
+    monkeypatch.setattr(agent, "current_ssid", lambda: "Lab-Redes")
+    monkeypatch.setattr(agent, "save_pairing",
+                        lambda answer, server, ssid=None: saved.append((answer["networkName"], ssid)))
     return saved
 
 
@@ -236,7 +239,7 @@ def test_the_code_is_used_only_after_the_program_is_in_place(paths, configured):
 
     assert run(steps, paths) == ("Lab-Redes", "C:/WiFiSense/WiFiSenseAgente.exe")
     assert steps.done == ["stop", "copy", "pair", "start"]
-    assert configured == ["Lab-Redes"]
+    assert configured == [("Lab-Redes", "Lab-Redes")]  # the key is tied to the Wi-Fi the computer is on
 
 
 def test_if_windows_does_not_let_copy_the_code_is_not_spent(paths, configured):
