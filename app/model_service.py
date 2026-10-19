@@ -15,6 +15,8 @@ logger = logging.getLogger(__name__)
 
 MODEL_VERSION = "isolation-forest-1.1"
 TRAINING_SOURCE = "línea base sintética de comportamiento Wi-Fi normal (datos simulados)"
+# Format of the file saved in AI_MODEL_PATH; a model trained with real measurements has its own version name.
+STATE_FORMAT = "wifisense-model-2"
 
 # Direction in which a deviation is harmful: +1 higher is worse, -1 lower is worse.
 HARMFUL_DIRECTION = {
@@ -81,35 +83,49 @@ def generate_baseline(samples: int = 5000, seed: int = 42) -> pd.DataFrame:
 
 class AnomalyDetectionService:
     def __init__(self, model: IsolationForest, medians: pd.Series, spreads: pd.Series,
-                 raw_medians: dict[str, float]):
+                 raw_medians: dict[str, float], version: str = MODEL_VERSION, trained_on: str = TRAINING_SOURCE,
+                 samples: int | None = None, trained_at: str | None = None):
         self._model = model
         self._medians = medians
         self._spreads = spreads
         self._raw_medians = raw_medians
+        self.version = version
+        self.trained_on = trained_on
+        self.samples = samples
+        self.trained_at = trained_at
+
+    @property
+    def real_data(self) -> bool:
+        return self.version != MODEL_VERSION
 
     @classmethod
-    def train(cls, baseline: pd.DataFrame, seed: int = 42) -> "AnomalyDetectionService":
+    def train(cls, baseline: pd.DataFrame, seed: int = 42, **metadata) -> "AnomalyDetectionService":
         features = preprocessing.transform(baseline)
         model = build_model(seed=seed)
         model.fit(features)
         spreads = features.quantile(0.75) - features.quantile(0.25)
-        return cls(model, features.median(), spreads, baseline.median().to_dict())
+        return cls(model, features.median(), spreads, baseline.median().to_dict(), **metadata)
 
     @classmethod
     def load_or_train(cls, path: str) -> "AnomalyDetectionService":
         model_path = Path(path)
         if model_path.exists():
             state = joblib.load(model_path)
-            if state.pop("version", None) == MODEL_VERSION:
-                logger.info("Loading model from %s", model_path)
+            stored_format = state.pop("format", None)
+            if stored_format == STATE_FORMAT or (stored_format is None and state.get("version") == MODEL_VERSION):
+                logger.info("Loading model %s from %s", state.get("version"), model_path)
                 return cls(**state)
             logger.info("Model at %s is from another version, retraining", model_path)
         else:
             logger.info("No model at %s, training baseline model", model_path)
         service = cls.train(generate_baseline())
-        model_path.parent.mkdir(parents=True, exist_ok=True)
-        joblib.dump(service._state(), model_path)
+        service.save(path)
         return service
+
+    def save(self, path: str) -> None:
+        model_path = Path(path)
+        model_path.parent.mkdir(parents=True, exist_ok=True)
+        joblib.dump(self._state(), model_path)
 
     @property
     def threshold(self) -> float:
@@ -142,7 +158,7 @@ class AnomalyDetectionService:
             anomalous_samples=int(outliers.sum()),
             sample_size=len(scores),
             imputed_features=imputed,
-            model_version=MODEL_VERSION,
+            model_version=self.version,
             simulated_data=request.simulated_data,
         )
 
@@ -154,9 +170,15 @@ class AnomalyDetectionService:
         return harmful_deviations(sample, self._medians, self._spreads)
 
     def info(self, recommendation_engine: str = "reglas") -> ModelInfo:
-        return ModelInfo(algorithm="IsolationForest", model_version=MODEL_VERSION, features=FEATURES,
-                         threshold=round(self.threshold, 4), trained_on=TRAINING_SOURCE,
-                         recommendation_engine=recommendation_engine)
+        return ModelInfo(algorithm="IsolationForest", model_version=self.version, features=FEATURES,
+                         threshold=round(self.threshold, 4), trained_on=self.trained_on,
+                         recommendation_engine=recommendation_engine, real_data=self.real_data,
+                         trained_samples=self.samples, trained_at=self.trained_at)
+
+    def flag_raw(self, raw: pd.DataFrame) -> np.ndarray:
+        """Outlier flags for raw measurements (missing values filled with this model's own baseline medians)."""
+        filled, _ = preprocessing.impute(raw[FEATURES].copy(), self._raw_medians)
+        return self.flag(preprocessing.transform(filled))
 
     def _severity(self, score: float) -> Severity:
         margin = score - self.threshold
@@ -194,4 +216,5 @@ class AnomalyDetectionService:
 
     def _state(self) -> dict:
         return {"model": self._model, "medians": self._medians, "spreads": self._spreads,
-                "raw_medians": self._raw_medians, "version": MODEL_VERSION}
+                "raw_medians": self._raw_medians, "version": self.version, "trained_on": self.trained_on,
+                "samples": self.samples, "trained_at": self.trained_at, "format": STATE_FORMAT}
