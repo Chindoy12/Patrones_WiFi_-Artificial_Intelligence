@@ -19,6 +19,27 @@ si fueran de otra red; el tráfico tampoco se mezcla entre redes. Una clave revo
 computador y las demás siguen. Una instalación anterior (una sola clave, sin Wi-Fi) sigue funcionando y aprende su
 Wi-Fi en el primer reporte.
 
+**Reconocer cada equipo (1.7.0).** Muchos celulares usan una MAC aleatoria y no dan su nombre, así que la lista
+decía «Equipo desconocido». Ahora el agente también escucha lo que los equipos **anuncian de sí mismos** en la red y
+mira qué servicios ofrecen, y con eso deduce qué son:
+
+- **mDNS / Bonjour**: los iPhone, Mac, Chromecast, impresoras, parlantes y televisores anuncian su nombre
+  («iPhone de Ana», «Sala TV») y a veces su modelo («MacBookPro18,1», «Chromecast»).
+- **UPnP / SSDP**: televisores, consolas, decodificadores y routers publican una descripción con fabricante y modelo.
+  El agente la lee solo de la misma IP que la anunció y solo en la red local.
+- **Servicios**: un equipo que atiende el puerto 62078 es un iPhone o iPad; el 8009, un Chromecast o TV; el 9100, una
+  impresora; el 554, una cámara; el 445, un computador con Windows.
+
+Con eso cada equipo llega con su **tipo** (celular, computador, TV, impresora, cámara, parlante, consola o dispositivo
+inteligente; es una suposición), su modelo si lo anuncia, y dos marcas seguras: **«Este computador»** (donde corre el
+agente) y **«Router»** (la puerta de enlace). Si aun así no sabes cuál es tu celular, la página tiene el asistente
+**«¿Cuál es este equipo?»**: durante 10 minutos el agente reporta cada minuto en vez de cada 5; apagas el Wi-Fi del
+celular, la página ve cuál desapareció, lo enciendes, ve cuál volvió y le pones nombre.
+
+**Actualizar sin código (1.7.0).** Si el programa descargado es más nuevo que el instalado, la ventana muestra
+**«Actualizar a la versión X»**: detiene el agente, reemplaza el programa y lo vuelve a iniciar. Las claves y las redes
+ya agregadas se conservan; no hace falta ningún código.
+
 ## Instalación en Windows (sin Python)
 
 1. En WiFiSense entra a **Mi Wi-Fi → Agente WiFiSense → Instalar agente**. La página muestra un código de 8
@@ -84,6 +105,7 @@ Si Windows no deja leer los datos del Wi-Fi: Configuración → Privacidad y seg
 | Equipos conectados | un datagrama vacío a cada dirección de la red para llenar la tabla ARP y luego `arp -a` |
 | Fabricante de cada equipo | primeros 3 bytes de la MAC (OUI) en una tabla de ~180 fabricantes comunes |
 | Nombre de cada equipo | DNS inverso, NetBIOS (Windows) y mDNS/Bonjour (iPhone, Mac, Chromecast, impresoras) |
+| Tipo y modelo de cada equipo (desde 1.7.0) | servicios mDNS que anuncia, descripción UPnP (SSDP) y algunos puertos típicos (62078 iPhone, 8009 TV, 9100 impresora, 554 cámara…). Se revisa como máximo cada 30 minutos, o antes si aparece un equipo nuevo |
 | MAC privada | bit de «administración local»: celulares y tabletas que usan una MAC aleatoria en cada red |
 | Puertos abiertos en el router | intento de conexión a 21, 22, 23, 53, 80, 443, 445, 1900, 7547, 8080 y 8443 |
 | Tráfico de este computador (desde 1.4.0) | contadores del sistema desde el reporte anterior: bytes y paquetes de la tarjeta Wi-Fi (o de cable) y paquetes TCP, UDP e ICMP. En Windows con la API IP Helper (`GetIfTable2`, `GetTcpStatisticsEx`…), igual en cualquier idioma; en Linux de `/proc/net/dev` y `/proc/net/snmp`. No se instala ningún programa de captura |
@@ -92,8 +114,11 @@ Si Windows no deja leer los datos del Wi-Fi: Configuración → Privacidad y seg
 
 - Las direcciones MAC **no salen del computador**: se envía una huella SHA-256 con una sal aleatoria creada en esta
   instalación. Sirve para saber si un equipo es nuevo, pero no para saber cuál es.
-- De cada equipo se envía el fabricante y el nombre que **él mismo anuncia** en la red (como en la lista de
-  Bluetooth), para que lo reconozcas. No se envían IP ni el nombre del usuario del computador.
+- De cada equipo se envía el fabricante, el nombre y el modelo que **él mismo anuncia** en la red (como en la lista
+  de Bluetooth) y el tipo que el agente deduce, para que lo reconozcas. No se envían IP ni el nombre del usuario del
+  computador.
+- Para reconocer los equipos el agente solo pregunta lo que cualquier celular pregunta al buscar un Chromecast
+  (mDNS y SSDP) e intenta abrir unos pocos puertos de los equipos de la red local, sin enviarles nada.
 - La clave solo viaja por HTTPS (el agente rechaza `http://` salvo `localhost`, para pruebas). En el servidor se
   guarda solo su SHA-256; si la pierdes o se filtra, revócala en Mi Wi-Fi → Agente y crea otra.
 - El agente no ataca ni cambia nada: solo lee datos del sistema e intenta conexiones normales.
