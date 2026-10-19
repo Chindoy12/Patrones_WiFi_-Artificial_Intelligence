@@ -34,8 +34,9 @@ EXPLANATION = (
 )
 
 
-CODE_HELP = ("Para tu casa: Mi Wi-Fi > Agente WiFiSense. Para una red del equipo: Redes > Sensor. "
-             "Este computador mide la red Wi-Fi a la que está conectado; un código nuevo lo cambia de red.")
+CODE_HELP = ("Para tu casa: Mi Wi-Fi > Agente WiFiSense. Para una red del equipo: Redes > Sensor. Conecta este "
+             "computador al Wi-Fi de esa red antes de instalar: el código queda ligado a ese Wi-Fi, y puedes agregar "
+             "los de otras redes.")
 
 
 class InstallerWindow:
@@ -77,16 +78,17 @@ class InstallerWindow:
         self.root.bind("<Return>", lambda _event: self.install())
 
     def installed_view(self) -> None:
-        config = agent.load_config()
-        network = config.get("network") or "tu red"
+        networks = agent.config_networks(agent.load_config())
         auto = "arranca con Windows" if setup.starts_with_windows(self.registry) else "no arranca solo con Windows"
-        tk.Label(self.root, text=f"El agente está instalado y envía los reportes de «{network}» ({auto}).",
+        tk.Label(self.root, text=f"El agente está instalado ({auto}) y mide: {agent.describe_networks(networks)}.\n\n"
+                 "Cuando cambias de Wi-Fi, envía a la red de ese Wi-Fi. Para medir otra red, conecta este computador "
+                 "a ese Wi-Fi y agrega su código.",
                  fg=INK, bg=SKY, wraplength=440, justify="left", font=("Segoe UI", 10)).pack(anchor="w", pady=12)
         buttons = tk.Frame(self.root, bg=SKY)
         buttons.pack(anchor="e")
         ttk.Button(buttons, text="Cerrar", command=self.root.destroy).pack(side="right", padx=(8, 0))
         ttk.Button(buttons, text="Desinstalar", command=self.uninstall).pack(side="right", padx=(8, 0))
-        ttk.Button(buttons, text="Usar otro código", command=self.reinstall).pack(side="right")
+        ttk.Button(buttons, text="Agregar otra red (código)", command=self.reinstall).pack(side="right")
 
     # ----------------------------------------------------------------------------------------------- acciones
     def install(self) -> None:
