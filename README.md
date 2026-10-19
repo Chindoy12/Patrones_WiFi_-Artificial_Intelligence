@@ -21,8 +21,9 @@ app/evaluation.py     comparación IF vs LOF vs One-Class SVM, ajuste y sensibil
 app/quality.py        calidad de una conexión de 0 a 100 (curvas por métrica, actividades y consejos)
 app/security.py       auditoría de seguridad de la red del usuario (cifrado, puertos del router, equipos nuevos)
 app/channel.py        mejor canal Wi-Fi según las redes vecinas que vio el agente
+app/training.py       entrenamiento con mediciones reales y decisión de reemplazar el modelo en uso
 app/llm_advisor.py    recomendaciones opcionales con Claude
-docs/                 evaluacion_modelos.md, modelo_calidad.md, auditoria_seguridad.md y canal_wifi.md
+docs/                 evaluacion_modelos.md, entrenamiento_real.md, modelo_calidad.md, auditoria_seguridad.md y canal_wifi.md
 tests/                preprocesamiento, modelo, diagnóstico, escenarios, evaluación, seguridad, canal, agente y API
 agent/                agente WiFiSense que corre en la casa del usuario e instalador para Windows (ver agent/README.md)
 .github/workflows/    construcción del instalador WiFiSenseAgente.exe
@@ -43,6 +44,11 @@ Se eligieron en un conjunto de validación (ver *Evaluación*).
 **Entrenamiento.** Al arrancar, si no existe el archivo de `AI_MODEL_PATH` (o es de otra versión), se entrena con una línea base
 **sintética** de redes sanas (5 000 muestras generadas en `generate_baseline`) y se guarda con joblib. Es una
 decisión honesta y explícita: no hay datos reales etiquetados. `GET /api/v1/model` lo declara en `trainedOn`.
+
+**Entrenamiento con datos reales (Avance 16).** Con las mediciones reales de los sensores y agentes que envía el
+backend (`POST /api/v1/model/train`), se entrena un modelo nuevo y se compara con el que está en uso; solo lo
+reemplaza si es mejor, y el archivo guardado conserva el nombre de la versión real. Ver
+[docs/entrenamiento_real.md](docs/entrenamiento_real.md).
 
 **Variables:** `latency`, `jitter`, `packet_loss`, `bandwidth`, `signal_strength`, `traffic_volume`,
 `connected_devices`, `packet_count`.
@@ -144,6 +150,7 @@ hasta 3 recomendaciones en español (le envía también la causa probable del di
 | GET | `/health` | Estado del servicio (público) |
 | GET | `/api/v1/model` | Algoritmo, versión, variables, umbral y origen del entrenamiento |
 | GET | `/api/v1/model/evaluation` | Comparación de algoritmos, ajuste, sensibilidad y diagnóstico |
+| POST | `/api/v1/model/train` | Entrena con mediciones reales (mínimo 300), compara con el modelo en uso y lo reemplaza solo si es mejor; `restore: true` reconstruye una versión ya aprobada |
 | POST | `/api/v1/anomalies/detect` | Detecta anomalías en una ventana de mediciones |
 | POST | `/api/v1/quality/score` | Calidad de 0 a 100 de una prueba o medición |
 | POST | `/api/v1/security/assess` | Auditoría de seguridad de 0 a 100 con hallazgos y acciones |
@@ -216,9 +223,15 @@ pide también la auditoría de seguridad, la calidad y el mejor canal (los mismo
 muestra los equipos conectados de esa red. Desde 1.6.0 un computador puede medir varias redes: cada código queda ligado a su Wi-Fi y el agente usa
 la clave del Wi-Fi en el que está. El instalador (1.5.0 reinstala aunque el agente esté en marcha) se prueba en
 Windows real en cada Pull Request que cambie el agente (`.github/workflows/agente-windows.yml`) y se publica al llegar a
-`main`.
+`main`. Desde 1.7.0 el agente reconoce el tipo de cada equipo (mDNS, UPnP y servicios), marca su propio computador
+y el router, reporta cada minuto mientras el usuario identifica un equipo y se actualiza sin código.
+
+El backend entrena el modelo con las mediciones reales cada semana (o cuando un administrador lo pide) y guarda cada
+versión con sus métricas en `ai_model_versions`; si este servicio se redespliega, el backend le reconstruye la
+versión activa.
 
 ## Pendiente
 
-Reentrenamiento y evaluación con mediciones reales del agente, variables que separen la red local de internet,
-clasificador supervisado del tipo de falla para comparar con las firmas, y explicaciones con SHAP.
+Variables que separen la red local de internet, fallas reales etiquetadas por el equipo para medir con ellas (hoy las
+fallas de prueba se simulan sobre las mediciones reales), clasificador supervisado del tipo de falla para comparar con
+las firmas, y explicaciones con SHAP.
