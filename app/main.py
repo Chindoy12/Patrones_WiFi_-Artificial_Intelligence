@@ -6,10 +6,11 @@ from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
 
-from app import channel, evaluation, quality, security
+from app import channel, evaluation, quality, security, training
 from app.llm_advisor import ClaudeAdvisor
 from app.model_service import AnomalyDetectionService
-from app.schemas import AnalysisRequest, AnalysisResponse, EvaluationReport, ModelInfo
+from app.schemas import (AnalysisRequest, AnalysisResponse, EvaluationReport, ModelInfo, TrainingRequest,
+                         TrainingResult)
 from app.schemas_channel import ChannelRequest, ChannelResponse
 from app.schemas_quality import QualityRequest, QualityResponse
 from app.schemas_security import SecurityRequest, SecurityResponse
@@ -82,6 +83,29 @@ def health() -> dict:
 def model_info(service: AnomalyDetectionService = Depends(detector),
                claude: ClaudeAdvisor | None = Depends(advisor)) -> ModelInfo:
     return service.info(claude.model if claude else "reglas")
+
+
+_training_lock = threading.Lock()
+
+
+@app.post("/api/v1/model/train", response_model=TrainingResult, response_model_by_alias=True,
+          dependencies=[Depends(verify_api_key)])
+def train_model(payload: TrainingRequest, request: Request) -> TrainingResult:
+    """Trains a model with real measurements sent by the backend and puts it in use only if it is better (or rebuilds
+    the one already promoted, after a restart). Detection keeps using the current model meanwhile."""
+    with _training_lock:
+        try:
+            result, model = training.train(payload, request.app.state.detector)
+        except training.NotEnoughData as error:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error))
+        if model is not None:
+            request.app.state.detector = model
+            try:
+                model.save(MODEL_PATH)
+            except OSError:
+                logger.warning("The new model is in use but could not be saved to %s", MODEL_PATH)
+            logger.info("Model %s in use (%s)", model.version, result.decision)
+        return result
 
 
 @app.get("/api/v1/model/evaluation", response_model=EvaluationReport, response_model_by_alias=True,

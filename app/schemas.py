@@ -63,6 +63,51 @@ class ModelInfo(CamelModel):
     threshold: float
     trained_on: str
     recommendation_engine: str
+    real_data: bool = False
+    trained_samples: int | None = None
+    trained_at: str | None = None
+
+
+class TrainingSample(CamelModel):
+    """One real measurement of a network (the same metrics the detector uses); only latency is required."""
+    latency: float = Field(ge=0, le=10000)
+    jitter: float | None = Field(default=None, ge=0, le=10000)
+    packet_loss: float | None = Field(default=None, ge=0, le=100)
+    bandwidth: float | None = Field(default=None, ge=0, le=100000)
+    signal_strength: float | None = Field(default=None, ge=-100, le=0)
+    traffic_volume: float | None = Field(default=None, ge=0)
+    connected_devices: int | None = Field(default=None, ge=0, le=1024)
+    packet_count: int | None = Field(default=None, ge=0)
+    timestamp: datetime | None = None
+
+
+class TrainingRequest(CamelModel):
+    version: str = Field(pattern=r"^[a-z0-9][a-z0-9.-]{2,39}$")
+    samples: list[TrainingSample] = Field(min_length=1, max_length=20000)
+    seed: int = 42
+    activate: bool = Field(default=True, description="Replace the model in use if the new one is better")
+    restore: bool = Field(default=False, description="Rebuild a model that was already promoted, without evaluating")
+
+
+class TrainingMetrics(CamelModel):
+    precision: float
+    recall: float
+    f1: float
+    false_positive_rate: float
+
+
+class TrainingResult(CamelModel):
+    version: str
+    samples: int
+    train_samples: int
+    test_normal: int
+    test_faults: int
+    decision: Literal["PROMOTED", "REJECTED", "RESTORED"]
+    reason: str
+    candidate: TrainingMetrics | None = None
+    current: TrainingMetrics | None = None
+    current_version: str
+    active: bool
 
 
 class AlgorithmMetrics(CamelModel):

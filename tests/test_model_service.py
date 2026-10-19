@@ -76,8 +76,24 @@ def test_model_from_another_version_is_retrained(tmp_path):
     path = tmp_path / "model.joblib"
     AnomalyDetectionService.load_or_train(str(path))
     state = joblib.load(path)
-    joblib.dump({**state, "version": "isolation-forest-0.9"}, path)
+    old = {key: value for key, value in state.items()
+           if key in ("model", "medians", "spreads", "raw_medians")}
+    joblib.dump({**old, "version": "isolation-forest-0.9"}, path)
 
     AnomalyDetectionService.load_or_train(str(path))
 
     assert joblib.load(path)["version"] == MODEL_VERSION
+
+
+def test_model_trained_with_real_data_survives_a_restart(tmp_path):
+    path = tmp_path / "model.joblib"
+    real = AnomalyDetectionService.train(generate_baseline(400), version="real-20261019-1",
+                                         trained_on="400 mediciones reales", samples=400, trained_at="2026-10-19T10:00:00+00:00")
+    real.save(str(path))
+
+    loaded = AnomalyDetectionService.load_or_train(str(path))
+
+    assert loaded.version == "real-20261019-1"
+    assert loaded.real_data and loaded.samples == 400
+    info = loaded.info()
+    assert info.model_version == "real-20261019-1" and info.real_data and info.trained_samples == 400
