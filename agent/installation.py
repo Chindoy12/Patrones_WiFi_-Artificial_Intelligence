@@ -40,3 +40,29 @@ def install_and_pair(code: str, autostart: bool, paths, registry, pair=None, sto
         return f"No se pudo instalar: {error}."
     start(paths)
     return answer.get("networkName") or "tu red", exe
+
+
+def needs_update(paths, registry) -> bool:
+    """Este programa es una versión distinta de la instalada y no es el instalado (abrir el instalado no actualiza)."""
+    installed = setup.installed_version(registry)
+    return bool(installed) and installed != agent.AGENT_VERSION and \
+        setup.current_executable().resolve() != paths.exe.resolve()
+
+
+def update_program(paths, registry, stop=None, copy_in=None, start=None) -> str | None:
+    """Reemplaza el programa instalado por esta versión sin pedir código: las redes y sus claves se conservan (están
+    en la configuración, que no se toca). Devuelve el mensaje de error, o None si quedó actualizado."""
+    stop = stop or setup.stop_running_agent
+    copy_in = copy_in or (lambda: setup.install(setup.current_executable(), paths, registry, agent.AGENT_VERSION,
+                                                setup.starts_with_windows(registry)))
+    start = start or setup.start_agent
+    stop(paths)
+    try:
+        copy_in()
+    except OSError as error:
+        if paths.exe.exists():
+            start(paths)
+        return (f"No se pudo copiar el programa: {error}. Cierra «WiFiSenseAgente.exe» en el Administrador de tareas "
+                "y vuelve a intentarlo.")
+    start(paths)
+    return None

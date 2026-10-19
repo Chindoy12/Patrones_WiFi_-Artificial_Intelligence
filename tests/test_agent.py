@@ -213,6 +213,7 @@ def test_vendor_comes_from_the_mac_oui(mac, vendor):
 def test_devices_carry_a_fingerprint_vendor_and_name(monkeypatch):
     monkeypatch.setattr(agent, "wake_neighbors", lambda ip: None)
     monkeypatch.setattr(agent.time, "sleep", lambda _s: None)
+    monkeypatch.setattr(agent, "identities", lambda *args, **kwargs: {})  # no real mDNS, UPnP or port probes
     monkeypatch.setattr(agent, "IS_WINDOWS", False)
     monkeypatch.setattr(agent, "read_file", lambda _p: (
         "IP address       HW type     Flags       HW address            Mask     Device\n"
@@ -275,6 +276,7 @@ def test_detects_private_random_macs(mac, private):
 def test_devices_mark_private_macs_without_vendor(monkeypatch):
     monkeypatch.setattr(agent, "wake_neighbors", lambda ip: None)
     monkeypatch.setattr(agent.time, "sleep", lambda _s: None)
+    monkeypatch.setattr(agent, "identities", lambda *args, **kwargs: {})  # no real mDNS, UPnP or port probes
     monkeypatch.setattr(agent, "IS_WINDOWS", False)
     monkeypatch.setattr(agent, "read_file", lambda _p: (
         "IP address       HW type     Flags       HW address            Mask     Device\n"
