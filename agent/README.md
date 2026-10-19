@@ -9,8 +9,15 @@ un código de 8 caracteres; se instala igual, en un computador conectado a esa r
 las mediciones reales de esa red (latencia, pérdida, señal, velocidad del enlace, equipos y tráfico). Desde 1.5.0 el
 panel muestra además, como Mi Wi-Fi, los equipos conectados (fabricante y nombre), la auditoría de seguridad y el mejor
 canal. El código decide para cuál red trabaja: uno de Mi Wi-Fi la conecta con la casa del usuario; uno del panel, con
-la red del equipo. Un computador mide una sola red (la del Wi-Fi al que está conectado): un código nuevo lo cambia de
-red.
+la red del equipo.
+
+**Varias redes en un mismo computador (1.6.0).** Cada código queda ligado al Wi-Fi al que estaba conectado el
+computador cuando se instaló. Se pueden agregar los códigos de varias redes (por ejemplo los dos Wi-Fi de una casa, o
+la casa y la universidad): en cada reporte el agente mira a qué Wi-Fi está conectado y usa la clave de esa red, así
+que al cambiar de Wi-Fi cambia de red solo. En un Wi-Fi sin código no envía nada, para no guardar sus mediciones como
+si fueran de otra red; el tráfico tampoco se mezcla entre redes. Una clave revocada desde la página se quita de este
+computador y las demás siguen. Una instalación anterior (una sola clave, sin Wi-Fi) sigue funcionando y aprende su
+Wi-Fi en el primer reporte.
 
 ## Instalación en Windows (sin Python)
 
@@ -20,8 +27,8 @@ red.
    su PC»: pulsa **Más información → Ejecutar de todas formas**.
 3. La ventana explica qué hace el agente. Escribe el código, deja marcada (o no) la opción de iniciar con Windows y
    pulsa **Instalar**. En segundos aparecen los datos en Mi Wi-Fi (o en el panel del sensor).
-4. Para pasarlo a otra red no hay que descargarlo otra vez: abre el mismo programa, pulsa **Usar otro código** y
-   escribe el código nuevo.
+4. Para agregar otra red no hay que descargarlo otra vez: conecta el computador a ese Wi-Fi, abre el mismo programa,
+   pulsa **Agregar otra red (código)** y escribe el código de esa red.
 
 **Reinstalar con el agente en marcha (1.5.0).** El programa de PyInstaller corre como dos procesos y los dos
 mantienen abierto el `.exe`; hasta 1.4.0 el instalador detenía solo uno y Windows no dejaba reemplazar el programa
