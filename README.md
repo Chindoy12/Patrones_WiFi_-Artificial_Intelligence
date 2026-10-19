@@ -213,7 +213,8 @@ El agente (`agent/`) también es el **sensor de las redes del equipo**: con un c
 backend como mediciones reales de esa red (fuente `AGENT`), con el tráfico del computador y sus paquetes por protocolo,
 y el backend corre sobre ellas el mismo análisis por umbrales del monitoreo. Con cada reporte del sensor el backend
 pide también la auditoría de seguridad, la calidad y el mejor canal (los mismos endpoints de Mi Wi-Fi), y el panel
-muestra los equipos conectados de esa red. El instalador (1.5.0 reinstala aunque el agente esté en marcha) se prueba en
+muestra los equipos conectados de esa red. Desde 1.6.0 un computador puede medir varias redes: cada código queda ligado a su Wi-Fi y el agente usa
+la clave del Wi-Fi en el que está. El instalador (1.5.0 reinstala aunque el agente esté en marcha) se prueba en
 Windows real en cada Pull Request que cambie el agente (`.github/workflows/agente-windows.yml`) y se publica al llegar a
 `main`.
 
