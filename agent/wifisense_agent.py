@@ -46,7 +46,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Callable, Optional
 
-AGENT_VERSION = "1.6.0"
+AGENT_VERSION = "1.7.0"
 DEFAULT_SERVER = "https://patroneswifibackend-production.up.railway.app"
 REPORT_PATH = "/api/agent/reports"
 PAIR_PATH = "/api/agent/pair"
@@ -590,7 +590,30 @@ def own_mac() -> Optional[str]:
     return ":".join(f"{node >> shift & 0xff:02x}" for shift in range(40, -1, -8))
 
 
-def devices(own_ip: Optional[str], salt: str, wait: float = 2.0) -> list[dict]:
+try:  # el agente como paquete (pruebas) o como script suelto (PyInstaller, python wifisense_agent.py)
+    from agent import device_discovery as discovery
+except ImportError:  # pragma: no cover
+    import device_discovery as discovery
+
+IDENTITY_MAX_AGE = 1800  # lo que anuncian los equipos y sus puertos cambia poco: se revisa cada 30 minutos
+_identity_cache: dict = {"at": 0.0, "macs": frozenset(), "by_mac": {}}
+
+
+def identities(by_ip: dict[str, str], own_ip: str, gateway: Optional[str], now: Optional[float] = None,
+               identify=None) -> dict[str, dict]:
+    """Nombre, modelo y tipo sugerido de cada MAC. Se vuelve a preguntar a la red cada 30 minutos o cuando aparece un
+    equipo nuevo (en el modo de identificar el agente reporta cada minuto y no debe escanear cada vez)."""
+    now = time.time() if now is None else now
+    identify = identify or discovery.identify
+    macs = frozenset(by_ip.values())
+    cache = _identity_cache
+    if now - cache["at"] > IDENTITY_MAX_AGE or not macs <= cache["macs"]:
+        found = identify(list(by_ip), own_ip, gateway)
+        cache.update(at=now, macs=macs, by_mac={mac: found.get(ip, {}) for ip, mac in by_ip.items()})
+    return cache["by_mac"]
+
+
+def devices(own_ip: Optional[str], salt: str, wait: float = 2.0, gateway: Optional[str] = None) -> list[dict]:
     """Equipos conectados a la red (incluido este), como {huella, fabricante, nombre}. La huella es SHA-256 con sal:
     la MAC no sale del computador. El fabricante viene del OUI de la MAC y el nombre del equipo (como en el Bluetooth
     o la zona Wi-Fi) se resuelve por DNS inverso, NetBIOS o mDNS; cualquiera de los dos puede faltar. Si la MAC es
@@ -608,19 +631,43 @@ def devices(own_ip: Optional[str], salt: str, wait: float = 2.0) -> list[dict]:
     # Los nombres se resuelven en paralelo porque cada uno puede tardar hasta un segundo.
     with ThreadPoolExecutor(max_workers=min(len(by_ip), 32) or 1) as pool:
         names = dict(zip(by_ip, pool.map(hostname_of, by_ip)))
+    try:
+        announced = identities(by_ip, own_ip, gateway)
+    except Exception as error:  # reconocer equipos es un extra: si falla, se envían como antes
+        print(f"  aviso: no se pudo identificar los equipos: {error}", file=sys.stderr)
+        announced = {}
     found = []
     for ip, mac in sorted(by_ip.items(), key=lambda item: item[1]):
-        device = {"id": mac_fingerprint(mac, salt)}
-        vendor = vendor_of(mac)
-        if vendor:
-            device["vendor"] = vendor
-        elif is_private_mac(mac):
-            device["privateMac"] = True  # casi siempre un celular o tableta con la MAC aleatoria activada
-        name = own_name if ip == own_ip else names.get(ip)
-        if name:
-            device["name"] = name
-        found.append(device)
+        found.append(describe_device(ip, mac, salt, own_ip, gateway, own_name if ip == own_ip else names.get(ip),
+                                     announced.get(mac, {})))
     return found[:MAX_DEVICES]
+
+
+def describe_device(ip: str, mac: str, salt: str, own_ip: str, gateway: Optional[str], hostname: Optional[str],
+                    announced: dict) -> dict:
+    """Lo que se envía de un equipo: su huella (nunca la MAC), fabricante, nombre, modelo, tipo y papel."""
+    device = {"id": mac_fingerprint(mac, salt)}
+    vendor = vendor_of(mac)
+    private = not vendor and is_private_mac(mac)
+    if vendor:
+        device["vendor"] = vendor
+    elif private:
+        device["privateMac"] = True  # casi siempre un celular o tableta con la MAC aleatoria activada
+    # El nombre que el equipo anuncia por mDNS o UPnP ("iPhone de Ana", "Sala TV") es el que la persona le puso.
+    name = announced.get("name") or hostname
+    if name:
+        device["name"] = name[:63]
+    if announced.get("model"):
+        device["model"] = announced["model"][:63]
+    if ip == own_ip:
+        device["role"], device["kind"] = "SELF", "COMPUTER"
+    elif ip == gateway:
+        device["role"] = "ROUTER"
+    else:
+        kind = discovery.decide_kind(name, announced.get("model"), vendor, announced.get("kinds", []), private)
+        if kind:
+            device["kind"] = kind
+    return device
 
 
 # -------------------------------------------------------------------------------------------- latencia y puertos
@@ -889,7 +936,7 @@ def collect(salt: str) -> dict:
         return thread
 
     threads = [task("wifi", wifi_info), task("internet", lambda: measure(*INTERNET_TARGET)),
-               task("devices", lambda: devices(own_ip, salt))]
+               task("devices", lambda: devices(own_ip, salt, gateway=gateway))]
     if gateway:
         threads += [task("router", lambda: measure(gateway, 80, count=5)), task("ports", lambda: open_ports(gateway))]
     for thread in threads:
@@ -1157,6 +1204,10 @@ def describe_networks(networks: list[dict]) -> str:
 
 # ---------------------------------------------------------------------------------------------- línea de comandos
 
+KIND_LABELS = {"PHONE": "celular o tableta", "COMPUTER": "computador", "TV": "televisor", "PRINTER": "impresora",
+               "CAMERA": "cámara", "SPEAKER": "parlante", "CONSOLE": "consola", "IOT": "casa inteligente"}
+
+
 def describe(report: dict) -> str:
     lines = [f"  Red: {report.get('ssid', 'sin Wi-Fi (¿cable?)')}  seguridad {report.get('authentication')}"
              f"  banda {report.get('band', '?')} GHz  canal {report.get('channel', '?')}"
@@ -1170,6 +1221,11 @@ def describe(report: dict) -> str:
         lines.append(f"  Tráfico de este computador desde el reporte anterior: "
                      f"{report['trafficBytes'] / 1048576:.1f} MB, {report['trafficPackets']} paquetes"
                      + (f" ({protocols})" if protocols else ""))
+    known = [d for d in report.get("devices") or [] if d.get("name") or d.get("kind")]
+    if known:
+        lines.append("  Equipos reconocidos: " + ", ".join(
+            (d.get("name") or "sin nombre") + (f" ({KIND_LABELS[d['kind']]})" if d.get("kind") in KIND_LABELS else "")
+            for d in known[:12]))
     if report.get("wifiNote") == "LOCATION_PERMISSION":
         lines.append("  Windows no deja leer el Wi-Fi: Configuración > Privacidad > Ubicación > activa "
                      "'Permitir que las aplicaciones de escritorio accedan a tu ubicación'.")
@@ -1234,6 +1290,15 @@ def command_scan(_args) -> int:
     return 0
 
 
+def next_wait(answer: dict, interval: int) -> int:
+    """Mientras alguien identifica un equipo en la página, el servidor pide reportar cada minuto; nunca más seguido que
+    MIN_INTERVAL ni más lento que el intervalo normal."""
+    asked = answer.get("nextReportSeconds") if isinstance(answer, dict) else None
+    if isinstance(asked, (int, float)) and asked > 0:
+        return int(max(MIN_INTERVAL, min(asked, interval)))
+    return interval
+
+
 def command_run(args) -> int:
     config = load_config()
     if not config_networks(config):
@@ -1265,6 +1330,7 @@ def command_run(args) -> int:
             try:
                 answer = send(report, config["server"], network["key"])
                 sent = True
+                wait = next_wait(answer, interval)
                 if counters:
                     save_traffic_state(counters, network=tag)
                 print(f"  Enviado a «{network.get('network') or 'tu red'}». {answer.get('summary', '')}".rstrip())
