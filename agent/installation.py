@@ -22,7 +22,7 @@ def install_and_pair(code: str, autostart: bool, paths, registry, pair=None, sto
                                                 autostart))
     start = start or setup.start_agent
     config = agent.load_config()
-    had_agent = bool(config.get("key"))
+    had_agent = bool(agent.config_networks(config))
     stop(paths)
     try:
         exe = copy_in()
@@ -33,7 +33,7 @@ def install_and_pair(code: str, autostart: bool, paths, registry, pair=None, sto
                 "y vuelve a pulsar Instalar: el código no se gastó.")
     try:
         answer = pair(code, config["server"])
-        agent.save_pairing(answer, config["server"])
+        agent.save_pairing(answer, config["server"], ssid=agent.current_ssid())
     except agent.SendError as error:
         if had_agent:
             start(paths)

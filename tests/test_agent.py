@@ -557,3 +557,100 @@ def test_windows_reads_its_own_counters():
     assert counters, "la estructura MIB_IF_ROW2 no coincide o la API no respondió"
     assert counters["TCP.in4"] >= 0 and counters["UDP.out4"] >= 0
     assert {"bytes.in", "bytes.out", "packets.in", "packets.out"} <= counters.keys()
+
+
+# --------------------------------------------------------------------------------- varias redes por Wi-Fi (1.6.0)
+
+CASA, LAB = "wsa_" + "c" * 43, "wsa_" + "l" * 43
+
+
+def test_a_code_is_tied_to_the_wifi_and_codes_of_other_wifis_are_kept(tmp_path, monkeypatch):
+    monkeypatch.delenv("WIFISENSE_AGENT_KEY", raising=False)
+    path = tmp_path / "agent.json"
+    agent.save_pairing({"key": CASA, "networkName": "Casa"}, "https://x.example.com", path, ssid="Casa-5G")
+    agent.save_pairing({"key": LAB, "networkName": "Lab"}, "https://x.example.com", path, ssid="Lab-Redes")
+    new_casa = "wsa_" + "n" * 43
+    agent.save_pairing({"key": new_casa, "networkName": "Casa"}, "https://x.example.com", path, ssid="Casa-5G")
+
+    networks = agent.config_networks(agent.load_config(path))
+    assert networks == [{"key": LAB, "network": "Lab", "ssid": "Lab-Redes"},
+                        {"key": new_casa, "network": "Casa", "ssid": "Casa-5G"}]
+    assert agent.describe_networks(networks) == "«Lab» en Lab-Redes; «Casa» en Casa-5G"
+
+
+def test_the_wifi_decides_which_network_receives_the_report():
+    networks = [{"key": CASA, "network": "Casa", "ssid": "Casa-5G"}, {"key": LAB, "network": "Lab", "ssid": "Lab-Redes"}]
+    assert agent.choose_network(networks, "Lab-Redes")["key"] == LAB
+    assert agent.choose_network(networks, "Casa-5G")["key"] == CASA
+    assert agent.choose_network(networks, "Cafe-Gratis") is None   # a Wi-Fi without code: nothing is sent
+    assert agent.choose_network(networks, None) is None            # cannot tell which one
+    single = [{"key": CASA, "network": "Casa", "ssid": "Casa-5G"}]
+    assert agent.choose_network(single, None)["key"] == CASA       # by cable, with only one network
+    assert agent.choose_network(single, "Otra") is None
+
+
+def test_an_installation_before_1_6_keeps_working_and_learns_its_wifi(tmp_path, monkeypatch):
+    monkeypatch.delenv("WIFISENSE_AGENT_KEY", raising=False)
+    path = tmp_path / "agent.json"
+    agent.save_config({"server": "https://x.example.com", "key": CASA, "network": "Casa", "salt": "s"}, path)
+
+    networks = agent.config_networks(agent.load_config(path))
+    chosen = agent.choose_network(networks, "Casa-5G")
+    assert chosen["key"] == CASA
+    agent.learn_ssid(chosen, "Casa-5G", path)
+
+    stored = json.loads(path.read_text(encoding="utf-8"))
+    assert "key" not in stored and stored["salt"] == "s"
+    assert stored["networks"] == [{"key": CASA, "network": "Casa", "ssid": "Casa-5G"}]
+    assert agent.choose_network(agent.config_networks(stored), "Otra") is None
+
+
+def test_the_agent_switches_network_with_the_wifi_and_a_revoked_key_is_dropped(tmp_path, monkeypatch):
+    monkeypatch.delenv("WIFISENSE_AGENT_KEY", raising=False)
+    path = tmp_path / "agent.json"
+    agent.save_pairing({"key": CASA, "networkName": "Casa"}, "https://x.example.com", path, ssid="Casa-5G")
+    agent.save_pairing({"key": LAB, "networkName": "Lab"}, "https://x.example.com", path, ssid="Lab-Redes")
+    original_load = agent.load_config
+    monkeypatch.setattr(agent, "config_path", lambda: path)
+    monkeypatch.setattr(agent, "load_config", lambda path_=None: original_load(path))
+    monkeypatch.setattr(agent, "traffic_state_path", lambda: tmp_path / "traffic.json")
+    monkeypatch.setattr(agent, "traffic_counters", lambda: {})
+    wifi = {"ssid": "Lab-Redes"}
+    monkeypatch.setattr(agent, "collect", lambda salt: {"ssid": wifi["ssid"], "deviceCount": 0, "openPorts": []})
+    sent = []
+
+    def send(report, server, key):
+        sent.append(key)
+        if key == CASA:
+            raise agent.SendError("la clave fue revocada", fatal=True)
+        return {"summary": "ok"}
+    monkeypatch.setattr(agent, "send", send)
+    once = agent.argparse.Namespace(once=True, interval=300)
+
+    assert agent.command_run(once) == 0
+    wifi["ssid"] = "Casa-5G"
+    assert agent.command_run(once) == 1
+    assert sent == [LAB, CASA]
+    # the revoked network is forgotten, the other one stays
+    assert [n["key"] for n in agent.config_networks(original_load(path))] == [LAB]
+    wifi["ssid"] = "Cafe-Gratis"
+    assert agent.command_run(once) == 1 and sent == [LAB, CASA]
+
+
+def test_traffic_is_not_mixed_between_two_networks(tmp_path, monkeypatch):
+    monkeypatch.setenv("WIFISENSE_AGENT_KEY", LAB)
+    state = tmp_path / "traffic.json"
+    monkeypatch.setattr(agent, "traffic_state_path", lambda: state)
+    monkeypatch.setattr(agent, "ensure_salt", lambda config: "sal")
+    monkeypatch.setattr(agent, "collect", lambda salt: {"deviceCount": 0, "openPorts": []})
+    counters = {"bytes.in": 500, "bytes.out": 500, "packets.in": 5, "packets.out": 5}
+    monkeypatch.setattr(agent, "traffic_counters", lambda: counters)
+    reports = []
+    monkeypatch.setattr(agent, "send", lambda report, server, key: reports.append(report) or {})
+    agent.save_traffic_state({"bytes.in": 1, "bytes.out": 1, "packets.in": 1, "packets.out": 1}, state,
+                             network=CASA[:12])
+
+    agent.command_run(agent.argparse.Namespace(once=True, interval=300))
+
+    assert "trafficBytes" not in reports[0]  # the previous counters were of the other network
+    assert agent.load_traffic_state(state)["network"] == LAB[:12]
