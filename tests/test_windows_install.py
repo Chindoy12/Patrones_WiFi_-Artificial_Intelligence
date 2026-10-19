@@ -281,3 +281,24 @@ def test_reinstalling_replaces_the_program_while_the_old_agent_is_running(paths,
         assert paths.exe.read_bytes() == program.read_bytes()
     finally:
         old_agent.kill()
+
+
+def test_a_newer_version_is_installed_without_a_code_and_keeps_the_networks(paths, monkeypatch):
+    registry = FakeRegistry()
+    registry.set_values(setup.UNINSTALL_KEY, {"DisplayName": "Agente WiFiSense", "DisplayVersion": "1.5.0"})
+    monkeypatch.setattr(setup, "current_executable", lambda: paths.install_dir.parent / "Descargas" / "nuevo.exe")
+    assert installation.needs_update(paths, registry)
+    registry.set_values(setup.UNINSTALL_KEY, {"DisplayVersion": agent.AGENT_VERSION})
+    assert not installation.needs_update(paths, registry)
+
+    paths.install_dir.mkdir(parents=True)
+    paths.exe.write_bytes(b"MZ")
+    steps = Steps()
+    assert installation.update_program(paths, registry, stop=steps.stop, copy_in=steps.copy_in,
+                                       start=steps.start) is None
+    assert steps.done == ["stop", "copy", "start"]  # never asks the server for a code
+
+    failing = Steps(copy_error=PermissionError(32, "en uso"))
+    message = installation.update_program(paths, registry, stop=failing.stop, copy_in=failing.copy_in,
+                                          start=failing.start)
+    assert "Administrador de tareas" in message and failing.done == ["stop", "copy", "start"]

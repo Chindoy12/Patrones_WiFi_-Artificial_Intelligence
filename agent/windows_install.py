@@ -103,6 +103,10 @@ def run_command_line(exe: Path) -> str:
     return f'"{exe}" run'
 
 
+def installed_version(registry: Registry) -> Optional[str]:
+    return registry.get_value(UNINSTALL_KEY, "DisplayVersion")
+
+
 def is_installed(registry: Registry) -> bool:
     return registry.get_value(UNINSTALL_KEY, "DisplayName") is not None
 
