@@ -13,11 +13,11 @@ from tkinter import messagebox, ttk
 try:  # como paquete (pruebas) o como script suelto (PyInstaller)
     from agent import windows_install as setup
     from agent import wifisense_agent as agent
-    from agent.installation import install_and_pair
+    from agent.installation import install_and_pair, needs_update, update_program
 except ImportError:  # pragma: no cover
     import windows_install as setup
     import wifisense_agent as agent
-    from installation import install_and_pair
+    from installation import install_and_pair, needs_update, update_program
 
 BLUE = "#3b6cf6"
 INK = "#1b2a41"
@@ -89,6 +89,16 @@ class InstallerWindow:
         ttk.Button(buttons, text="Cerrar", command=self.root.destroy).pack(side="right", padx=(8, 0))
         ttk.Button(buttons, text="Desinstalar", command=self.uninstall).pack(side="right", padx=(8, 0))
         ttk.Button(buttons, text="Agregar otra red (código)", command=self.reinstall).pack(side="right")
+        if needs_update(self.paths, self.registry):
+            installed = setup.installed_version(self.registry)
+            tk.Label(self.root, text=f"Hay una versión nueva: tienes la {installed} y este instalador es la "
+                     f"{agent.AGENT_VERSION}. Actualizar no pide código: tus redes se conservan.", fg=BLUE, bg=SKY,
+                     wraplength=440, justify="left").pack(anchor="w", pady=(12, 4))
+            self.update_button = ttk.Button(self.root, text=f"Actualizar a la versión {agent.AGENT_VERSION}",
+                                            command=self.update)
+            self.update_button.pack(anchor="w")
+            self.status = tk.Label(self.root, text="", fg=MUTED, bg=SKY, wraplength=440, justify="left")
+            self.status.pack(anchor="w", pady=(6, 0))
 
     # ----------------------------------------------------------------------------------------------- acciones
     def install(self) -> None:
@@ -116,6 +126,20 @@ class InstallerWindow:
         messagebox.showinfo("Agente WiFiSense", f"Listo. El agente ya está midiendo «{network}» y en un momento "
                             "verás los datos en WiFiSense.\n\nPuedes cerrar esta ventana.")
         self.root.destroy()
+
+    def update(self) -> None:
+        self.update_button.state(["disabled"])
+        self.say("Actualizando…")
+        threading.Thread(target=self._update, daemon=True).start()
+
+    def _update(self) -> None:
+        error = update_program(self.paths, self.registry)
+        if error:
+            self.root.after(0, lambda: (self.say(error, error=True), self.update_button.state(["!disabled"])))
+        else:
+            self.root.after(0, lambda: (messagebox.showinfo(
+                "Agente WiFiSense", f"Listo: el agente quedó en la versión {agent.AGENT_VERSION} y sigue midiendo tus "
+                "redes."), self.root.destroy()))
 
     def reinstall(self) -> None:
         for widget in self.root.winfo_children()[1:]:
