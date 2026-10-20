@@ -1,0 +1,44 @@
+# Checks every change of the AI service before it reaches Railway: all the tests (model, training, diagnosis, quality,
+# security, channel, agent and API), the known vulnerabilities of the Python packages and the Docker image Railway
+# builds. The Windows installer of the agent has its own workflow (agente-windows.yml). Runs on every Pull Request and
+# on main.
+name: Servicio de IA
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: servicio-ia-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pruebas:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Instalar dependencias
+        run: python -m pip install -r requirements.txt
+
+      - name: Pruebas
+        run: python -m pytest -q
+
+      - name: Vulnerabilidades conocidas en los paquetes
+        run: |
+          python -m pip install pip-audit
+          pip-audit -r requirements.txt
+
+      - name: Construir la imagen de Railway
+        run: docker build -t wifisense-ai .
