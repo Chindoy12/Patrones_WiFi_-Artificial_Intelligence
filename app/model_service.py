@@ -138,7 +138,7 @@ class AnomalyDetectionService:
         features = preprocessing.transform(raw)
 
         scores = -self._model.score_samples(features)
-        outliers = self.flag(features)
+        outliers = self.outliers(scores)
         latest_score = float(scores[-1])
         detected = bool(outliers[-1])
         harmful = self.deviations(features.iloc[-1])
@@ -164,7 +164,12 @@ class AnomalyDetectionService:
 
     def flag(self, features: pd.DataFrame) -> np.ndarray:
         """True for each transformed sample the model considers an outlier."""
-        return self._model.predict(features) == -1
+        return self.outliers(-self._model.score_samples(features))
+
+    def outliers(self, scores: np.ndarray) -> np.ndarray:
+        """The same decision as IsolationForest.predict (outlier when the score passes the threshold), taken from scores
+        already computed: scoring walks the 200 trees, the most expensive step of a detection, so it is done once."""
+        return np.asarray(scores) > self.threshold
 
     def deviations(self, sample: pd.Series) -> dict[str, float]:
         return harmful_deviations(sample, self._medians, self._spreads)

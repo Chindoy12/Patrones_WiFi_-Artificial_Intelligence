@@ -58,6 +58,54 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="WiFiSense AI", version="1.3.0", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
 
+# The biggest legitimate body is a training of 20 000 measurements (about 4 MB). Anything larger is refused before it is
+# read, so a client cannot make the service hold an unbounded request in memory.
+MAX_BODY_BYTES = 8 * 1024 * 1024
+
+
+class BodyLimit:
+    """ASGI middleware: 413 when the declared size, or the bytes actually received, pass MAX_BODY_BYTES."""
+
+    def __init__(self, app, limit: int = MAX_BODY_BYTES):
+        self.app = app
+        self.limit = limit
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+        declared = dict(scope.get("headers") or []).get(b"content-length")
+        if declared is not None and declared.isdigit() and int(declared) > self.limit:
+            return await self._too_large(send)
+        received = 0
+
+        async def counted():
+            nonlocal received
+            message = await receive()
+            if message["type"] == "http.request":
+                received += len(message.get("body", b""))
+                if received > self.limit:
+                    raise BodyTooLarge()
+            return message
+
+        try:
+            await self.app(scope, counted, send)
+        except BodyTooLarge:
+            await self._too_large(send)
+
+    @staticmethod
+    async def _too_large(send):
+        body = b'{"detail":"La solicitud es demasiado grande."}'
+        await send({"type": "http.response.start", "status": 413,
+                    "headers": [(b"content-type", b"application/json"), (b"content-length", str(len(body)).encode())]})
+        await send({"type": "http.response.body", "body": body})
+
+
+class BodyTooLarge(Exception):
+    pass
+
+
+app.add_middleware(BodyLimit)
+
 
 def verify_api_key(x_api_key: str | None = Header(default=None)) -> None:
     """Only the backend calls this service; the shared key is optional for local development."""

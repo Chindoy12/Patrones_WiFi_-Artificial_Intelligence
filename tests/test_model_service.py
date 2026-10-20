@@ -1,4 +1,5 @@
 import joblib
+import pandas as pd
 import pytest
 
 from app import scenarios
@@ -97,3 +98,16 @@ def test_model_trained_with_real_data_survives_a_restart(tmp_path):
     assert loaded.real_data and loaded.samples == 400
     info = loaded.info()
     assert info.model_version == "real-20261019-1" and info.real_data and info.trained_samples == 400
+
+
+def test_outliers_from_the_scores_match_the_model_prediction():
+    service = AnomalyDetectionService.train(generate_baseline(600))
+    from app import preprocessing
+    from app.scenarios import FAULT_TYPES, degrade
+    import numpy as np
+    healthy = generate_baseline(300, seed=9)
+    faulty = [degrade(row.copy(), FAULT_TYPES[i % len(FAULT_TYPES)], 0.6) for i, (_, row) in enumerate(healthy.iterrows())]
+    features = preprocessing.transform(pd.concat([healthy, pd.DataFrame(faulty)], ignore_index=True))
+
+    assert (service.flag(features) == (service._model.predict(features) == -1)).all()
+    assert 200 < service.flag(features).sum() < 600  # both outliers and normal samples are compared
