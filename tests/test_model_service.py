@@ -104,7 +104,6 @@ def test_outliers_from_the_scores_match_the_model_prediction():
     service = AnomalyDetectionService.train(generate_baseline(600))
     from app import preprocessing
     from app.scenarios import FAULT_TYPES, degrade
-    import numpy as np
     healthy = generate_baseline(300, seed=9)
     faulty = [degrade(row.copy(), FAULT_TYPES[i % len(FAULT_TYPES)], 0.6) for i, (_, row) in enumerate(healthy.iterrows())]
     features = preprocessing.transform(pd.concat([healthy, pd.DataFrame(faulty)], ignore_index=True))
