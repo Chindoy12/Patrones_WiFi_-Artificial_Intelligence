@@ -1,17 +1,17 @@
-"""Capturas técnicas autorizadas (agente 2.0.0, solo el sensor de una red del equipo). Patrón Facade.
+"""Authorized technical captures (agent 2.0.0, only the sensor of a team network). Facade pattern.
 
-Problema: una captura toca muchas piezas (el permiso local, la herramienta disponible, los límites, la carpeta
-temporal, la consulta "¿me detengo?", el conteo y el envío) y cualquiera puede fallar. Solución: ``run_capture`` es
-la única entrada; el resto del agente no conoce las herramientas ni los archivos.
+Problem: a capture touches many pieces (the local permission, the available tool, the limits, the temporary folder,
+the "should I stop?" question, the count and the delivery) and any of them can fail. Solution: ``run_capture`` is the
+only entry; the rest of the agent knows neither the tools nor the files.
 
-Reglas que se cumplen siempre:
-  1. Solo se captura si quien administra ESTE computador lo permitió (``capture-consent on``). Pedirlo desde la
-     página no basta: el servidor no puede encender la captura por su cuenta.
-  2. El servidor solo envía el número de la captura y sus límites; nunca un comando. El agente decide la herramienta.
-  3. Sin modo promiscuo, como mucho 128 bytes por paquete, y dentro de los límites (segundos, paquetes, bytes).
-  4. Al servidor solo van conteos (capture_stats). El archivo temporal se borra al terminar, salga bien o mal.
-  5. Se informa en la consola qué se está capturando, y queda una línea en el registro local (sin secretos).
-  6. Si no se puede capturar, se dice el motivo real (sin herramienta, sin permiso...), nunca un resultado inventado.
+Rules that always hold:
+  1. A capture happens only if whoever administers THIS computer allowed it (``capture-consent on``). Asking for it
+     from the page is not enough: the server cannot turn the capture on by itself.
+  2. The server only sends the number of the capture and its limits; never a command. The agent chooses the tool.
+  3. No promiscuous mode, at most 128 bytes per packet, and within the limits (seconds, packets, bytes).
+  4. Only counts go to the server (capture_stats). The temporary file is deleted at the end, whether it went well or not.
+  5. The console tells what is being captured, and a line stays in the local log (without secrets).
+  6. If it cannot capture, the real reason is given (no tool, no permission...), never an invented result.
 """
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ import time
 from pathlib import Path
 from typing import Callable, Optional
 
-try:  # el agente como paquete (pruebas) o como script suelto (PyInstaller)
+try:  # the agent as a package (tests) or as loose scripts (PyInstaller)
     from agent import capture_backends as backends_module
     from agent import capture_files
     from agent.capture_stats import CaptureStats, Limits, failure, local_networks
@@ -32,14 +32,14 @@ except ImportError:  # pragma: no cover
     import capture_files
     from capture_stats import CaptureStats, Limits, failure, local_networks
 
-STATE_POLL_SECONDS = 5  # cada cuánto se pregunta al servidor si un administrador pidió detener la captura
+STATE_POLL_SECONDS = 5  # how often the server is asked whether an administrator asked to stop the capture
 CONSENT_KEY = "captureConsent"
 
 
 # ------------------------------------------------------------------------------------------------ consentimiento
 
 def consent_given(config: dict) -> bool:
-    """El permiso local: solo True si alguien lo activó explícitamente en este computador."""
+    """The local permission: True only if someone explicitly turned it on on this computer."""
     return config.get(CONSENT_KEY) is True
 
 
@@ -53,8 +53,8 @@ def set_consent(config: dict, allowed: bool) -> dict:
 
 def capabilities(config: dict, own_ip: Optional[str], backends: Optional[list] = None,
                  elevated: Optional[Callable[[], bool]] = None, monitor_hint: Optional[bool] = None) -> dict:
-    """Lo que este computador puede hacer, para el reporte (AgentReportRequest.Capabilities). Se revisa de verdad:
-    una herramienta que existe pero no se puede usar (falta administrador) se informa como no disponible."""
+    """What this computer can do, for the report (AgentReportRequest.Capabilities). It is really checked: a tool that
+    exists but cannot be used (administrator missing) is reported as not available."""
     backends = backends_module.all_backends() if backends is None else backends
     elevated = elevated or backends_module.is_elevated
     _chosen, checks = backends_module.choose_all(backends, own_ip)
@@ -73,7 +73,7 @@ def capabilities(config: dict, own_ip: Optional[str], backends: Optional[list] =
 
 
 def describe_capabilities(caps: dict, checks: Optional[dict] = None) -> str:
-    """Texto para la consola (comando capture-check)."""
+    """Text for the console (capture-check command)."""
     tools = [name for name, key in (("Npcap", "npcap"), ("pktmon", "pktmon"), ("socket de Windows", "rawSocket"),
                                     ("socket de paquetes", "packetSocket")) if caps.get(key)]
     lines = [
@@ -90,10 +90,10 @@ def describe_capabilities(caps: dict, checks: Optional[dict] = None) -> str:
     return "\n".join(lines)
 
 
-# ---------------------------------------------------------------------------------------------- una captura
+# ---------------------------------------------------------------------------------------------- one capture
 
 class StopWatcher:
-    """Pregunta al servidor cada pocos segundos si hay que detenerse, en un hilo aparte (la captura no se bloquea)."""
+    """Asks the server every few seconds whether to stop, in a separate thread (the capture does not block)."""
 
     def __init__(self, ask: Callable[[], bool], every: float = STATE_POLL_SECONDS):
         self.ask, self.every = ask, every
@@ -111,7 +111,7 @@ class StopWatcher:
                 if self.ask():
                     self.flag.set()
                     return
-            except Exception:  # sin conexión no se detiene: los límites de la captura siguen valiendo
+            except Exception:  # without a connection it does not stop: the limits of the capture still apply
                 continue
 
     def __exit__(self, *_exc) -> None:
@@ -137,8 +137,8 @@ def run_capture(task: dict, config: dict, agent_version: str, deliver: Callable[
                 backends: Optional[list] = None, temp_root: Optional[Path] = None,
                 log: Callable[[str], None] = print, watcher_every: float = STATE_POLL_SECONDS,
                 clock: Callable[[], float] = time.monotonic, sleep: Callable[[float], None] = time.sleep) -> dict:
-    """Hace la captura ``task`` (lo que respondió el servidor) y entrega el resultado con ``deliver``. Devuelve lo
-    entregado. Nunca lanza: cualquier problema termina en un resultado FAILED con su motivo."""
+    """Runs the capture ``task`` (what the server answered) and delivers the result with ``deliver``. Returns what was
+    delivered. It never raises: any problem ends in a FAILED result with its reason."""
     capture_id = task.get("captureId")
     if not isinstance(capture_id, int) or isinstance(capture_id, bool) or capture_id <= 0:
         return {}
@@ -172,7 +172,7 @@ def run_capture(task: dict, config: dict, agent_version: str, deliver: Callable[
     except backends_module.CaptureFailed as failed:
         log(f"  Captura técnica #{capture_id} falló: {failed.detail or failed.reason}")
         result = failure(capture_id, failed.reason, agent_version, backend.code)
-    except Exception as error:  # una falla inesperada también se informa, sin datos parciales
+    except Exception as error:  # an unexpected failure is reported too, without partial data
         log(f"  Captura técnica #{capture_id} falló: {error}")
         result = failure(capture_id, "CAPTURE_ERROR", agent_version, backend.code)
     finally:
@@ -198,7 +198,7 @@ def log_path() -> Path:
 
 
 def append_log(result: dict, path: Optional[Path] = None) -> None:
-    """Una línea por captura en el registro local: cuándo, cuál, con qué, cómo terminó. Sin direcciones ni secretos."""
+    """One line per capture in the local log: when, which one, with what, how it ended. No addresses nor secrets."""
     line = {key: result.get(key) for key in ("captureId", "status", "failureReason", "stopReason", "captureTool",
                                              "packetCount", "byteCount", "durationMs")}
     line["at"] = time.strftime("%Y-%m-%dT%H:%M:%S%z")

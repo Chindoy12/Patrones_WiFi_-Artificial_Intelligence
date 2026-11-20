@@ -1,12 +1,12 @@
-"""Estadísticas de una captura: lo único que sale del computador.
+"""Statistics of a capture: the only thing that leaves the computer.
 
-Cuenta paquetes y bytes, entrada y salida, difusión y multidifusión, paquetes por protocolo, los servicios más usados
-(por puerto conocido) y paquetes por segundo. Los equipos se cuentan (cuántos de la red local y cuántos de fuera), pero
-sus direcciones se quedan en memoria y se olvidan al terminar: el resultado no tiene ningún campo para una IP, una MAC
-o el contenido de un paquete (ver AgentCaptureResult en el backend, que además rechaza lo que no cuadre).
+Counts packets and bytes, incoming and outgoing, broadcast and multicast, packets per protocol, the most used services
+(by well-known port) and packets per second. The devices are counted (how many of the local network and how many from
+outside), but their addresses stay in memory and are forgotten at the end: the result has no field for an IP, a MAC or
+the content of a packet (see AgentCaptureResult in the backend, which also rejects whatever does not add up).
 
-Los límites (segundos, paquetes, bytes) los decide quien pidió la captura y se respetan aquí: al alcanzar uno, la
-captura se detiene y el resultado dice cuál fue (stopReason).
+The limits (seconds, packets, bytes) are decided by whoever asked for the capture and are enforced here: when one is
+reached, the capture stops and the result says which one (stopReason).
 """
 from __future__ import annotations
 
@@ -15,12 +15,12 @@ from collections import Counter
 from dataclasses import dataclass, field
 from typing import Iterable, Optional
 
-try:  # el agente como paquete (pruebas) o como script suelto (PyInstaller)
+try:  # the agent as a package (tests) or as loose scripts (PyInstaller)
     from agent.packet_parser import PROTOCOLS, PacketInfo
 except ImportError:  # pragma: no cover
     from packet_parser import PROTOCOLS, PacketInfo
 
-MAX_SECONDS_KEPT = 360  # el servidor acepta los segundos 0 a 360
+MAX_SECONDS_KEPT = 360  # the server accepts 0 to 360 seconds
 MAX_PORTS = 20
 SERVER_MAX_PACKETS = 100_000
 SERVER_MAX_BYTES = 100 * 1024 * 1024
@@ -28,7 +28,7 @@ SERVER_MAX_BYTES = 100 * 1024 * 1024
 
 @dataclass(frozen=True)
 class Limits:
-    """Lo que el servidor pidió: nunca más de lo que él mismo acepta."""
+    """What the server asked for: never more than what it accepts itself."""
     seconds: int
     packets: int
     bytes: int
@@ -46,8 +46,8 @@ class Limits:
 
 @dataclass
 class CaptureStats:
-    """Acumula paquete por paquete. ``local_networks`` son las redes de este computador (para saber qué es local y qué
-    es entrada o salida); ``own_addresses`` sus propias IP."""
+    """Accumulates packet by packet. ``local_networks`` are the networks of this computer (to tell what is local and
+    what is incoming or outgoing); ``own_addresses`` are its own IPs."""
     limits: Limits
     own_addresses: frozenset = frozenset()
     local_networks: tuple = ()
@@ -71,11 +71,11 @@ class CaptureStats:
     _remote_hosts: set = field(default_factory=set, repr=False)
 
     def full(self) -> bool:
-        """True cuando ya se alcanzó un límite: el que captura debe detenerse."""
+        """True once a limit has been reached: whoever captures must stop."""
         return self.stop_reason is not None
 
     def add(self, info: PacketInfo, timestamp: Optional[float] = None) -> bool:
-        """Cuenta un paquete. Devuelve False (y no lo cuenta) si ya se alcanzó un límite."""
+        """Counts a packet. Returns False (and does not count it) if a limit was already reached."""
         if self.full():
             return False
         if self.packets + 1 > self.limits.packets:
@@ -114,7 +114,7 @@ class CaptureStats:
         return True
 
     def _direction(self, info: PacketInfo) -> None:
-        # cada paquete cuenta una sola vez: salida si lo envió este computador, entrada si lo recibió
+        # each packet counts once: outgoing if this computer sent it, incoming if it received it
         if info.source and info.source in self.own_addresses:
             self.outbound_bytes += info.length
         elif info.destination and info.destination in self.own_addresses:
@@ -149,7 +149,7 @@ class CaptureStats:
 
     def result(self, capture_id: int, tool: str, interface_name: Optional[str], agent_version: str,
                duration_ms: int, dropped_by_tool: Optional[int]) -> dict:
-        """El cuerpo de POST /api/agent/captures. Solo conteos: ni direcciones ni contenido."""
+        """The body of POST /api/agent/captures. Counts only: neither addresses nor content."""
         protocols = [{"protocol": name if name in PROTOCOLS else "OTHER", "packets": count,
                       "bytes": self.protocol_bytes[name]}
                      for name, count in self.protocols.most_common()]
@@ -182,13 +182,13 @@ class CaptureStats:
         return {key: value for key, value in result.items() if value is not None}
 
     def forget_addresses(self) -> None:
-        """Al terminar: las direcciones vistas se olvidan (solo quedan los conteos)."""
+        """At the end: the addresses seen are forgotten (only the counts remain)."""
         self._local_hosts.clear()
         self._remote_hosts.clear()
 
 
 def _merge(protocols: list[dict]) -> list[dict]:
-    """Si algo raro se volvió OTHER, se suma en una sola fila (el servidor no acepta protocolos repetidos)."""
+    """If something odd turned into OTHER, it is added in a single row (the server does not accept repeated protocols)."""
     merged: dict[str, dict] = {}
     for row in protocols:
         found = merged.get(row["protocol"])
@@ -201,7 +201,7 @@ def _merge(protocols: list[dict]) -> list[dict]:
 
 
 def local_networks(prefixes: Iterable[str]) -> tuple:
-    """'192.168.1.23/24' -> la red 192.168.1.0/24. Lo que no se entienda se ignora."""
+    """'192.168.1.23/24' -> the network 192.168.1.0/24. Whatever cannot be understood is ignored."""
     networks = []
     for prefix in prefixes:
         try:
@@ -213,7 +213,7 @@ def local_networks(prefixes: Iterable[str]) -> tuple:
 
 def failure(capture_id: int, reason: str, agent_version: str, tool: Optional[str] = None,
             interface_name: Optional[str] = None) -> dict:
-    """El cuerpo de una captura que no se pudo hacer, con su motivo (los que conoce el servidor)."""
+    """The body of a capture that could not be done, with its reason (one the server knows)."""
     result = {"captureId": capture_id, "status": "FAILED", "failureReason": reason, "agentVersion": agent_version}
     if tool:
         result["captureTool"] = tool

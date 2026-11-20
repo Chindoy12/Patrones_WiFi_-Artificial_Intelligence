@@ -1,17 +1,18 @@
-"""Herramientas de captura que el agente sabe usar (patrón Strategy, con un Adapter para Npcap).
+"""Capture tools the agent knows how to use (Strategy pattern, with an Adapter for Npcap).
 
-Problema: en Windows hay varias formas de capturar, cada una con sus requisitos (Npcap lo instala el usuario y no
-necesita administrador; pktmon viene con Windows pero sí lo necesita; el socket sin procesar solo ve IP) y en Linux
-otra distinta. Solución: cada herramienta es una clase con la misma interfaz (``check`` y ``capture``) y
-``choose_backend`` elige la primera que funcione en este computador, en orden de preferencia. Agregar otra herramienta
-es agregar una clase, sin tocar el resto del agente.
+Problem: on Windows there are several ways to capture, each with its own requirements (the user installs Npcap and it
+needs no administrator; pktmon comes with Windows but does need it; the raw socket only sees IP) and Linux has yet
+another one. Solution: each tool is a class with the same interface (``check`` and ``capture``) and ``choose_backend``
+picks the first one that works on this computer, in order of preference. Adding another tool is adding a class,
+without touching the rest of the agent.
 
-Captura mínima en todas: sin modo promiscuo (solo el tráfico de este computador y la difusión de la red), como mucho
-SNAPLEN bytes por paquete (las cabeceras) y siempre dentro de los límites de la captura. Ninguna instala nada ni
-cambia la configuración del sistema: si falta una herramienta o un permiso, se informa y la captura no se hace.
+Minimal capture in all of them: no promiscuous mode (only the traffic of this computer and the broadcast of the
+network), at most SNAPLEN bytes per packet (the headers) and always within the limits of the capture. None of them
+installs anything or changes the configuration of the system: if a tool or a permission is missing, it is reported and
+the capture is not done.
 
-Lo que NO puede hacer ninguna (y se dice en la página): ver lo que los demás equipos del Wi-Fi envían a Internet. En
-Wi-Fi cada equipo habla con el punto de acceso; para eso haría falta modo monitor (escenario C), que el agente no activa.
+What none of them can do (and the page says so): see what the other devices of the Wi-Fi send to the internet. On Wi-Fi
+each device talks to the access point; that would need monitor mode (scenario C), which the agent does not turn on.
 """
 from __future__ import annotations
 
@@ -26,7 +27,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Iterable, Optional
 
-try:  # el agente como paquete (pruebas) o como script suelto (PyInstaller)
+try:  # the agent as a package (tests) or as loose scripts (PyInstaller)
     from agent import packet_parser, pcap_files
     from agent.capture_stats import CaptureStats
     from agent.capture_files import TempCapture
@@ -37,13 +38,13 @@ except ImportError:  # pragma: no cover
     from capture_files import TempCapture
 
 IS_WINDOWS = os.name == "nt"
-SNAPLEN = 128          # bytes guardados por paquete: alcanzan para las cabeceras, no para el contenido
-READ_TIMEOUT_MS = 500  # cada cuánto se revisa si hay que detenerse aunque no lleguen paquetes
+SNAPLEN = 128          # bytes kept per packet: enough for the headers, not for the content
+READ_TIMEOUT_MS = 500  # how often it checks whether to stop even when no packets arrive
 COMMAND_TIMEOUT = 60
 
 
 class CaptureFailed(Exception):
-    """La captura no se pudo hacer. ``reason`` es uno de los motivos que entiende el servidor."""
+    """The capture could not be done. ``reason`` is one of the reasons the server understands."""
 
     def __init__(self, reason: str, detail: str = ""):
         super().__init__(detail or reason)
@@ -53,26 +54,26 @@ class CaptureFailed(Exception):
 
 @dataclass
 class Check:
-    """Si una herramienta se puede usar ahora en este computador, y si no, por qué."""
+    """Whether a tool can be used now on this computer, and if not, why."""
     usable: bool
     present: bool
     reason: Optional[str] = None  # NO_CAPTURE_TOOL, PERMISSION_DENIED, NO_INTERFACE, UNSUPPORTED_OS
     detail: str = ""
     interfaces: int = 0
-    monitor_mode: Optional[bool] = None  # None: no se sabe
+    monitor_mode: Optional[bool] = None  # None: unknown
 
 
 @dataclass
 class Run:
-    """Lo que la herramienta dice de la captura además de los paquetes."""
+    """What the tool says about the capture besides the packets."""
     interface_name: Optional[str]
-    dropped_by_tool: Optional[int] = None  # None cuando la herramienta no lo informa (nunca se inventa un 0)
+    dropped_by_tool: Optional[int] = None  # None when the tool does not report it (a 0 is never invented)
     damaged_file: bool = False
 
 
 @dataclass
 class Session:
-    """Lo que una herramienta necesita para capturar: dónde contar, cuándo parar y dónde dejar temporales."""
+    """What a tool needs to capture: where to count, when to stop and where to leave temporary files."""
     stats: CaptureStats
     should_stop: Callable[[], bool]
     temp: Optional[TempCapture] = None
@@ -82,7 +83,7 @@ class Session:
     sleep: Callable[[float], None] = time.sleep
 
     def over(self, started: float) -> bool:
-        """True cuando hay que dejar de capturar: se pidió parar, se alcanzó un límite o se acabó el tiempo."""
+        """True when capturing must stop: a stop was asked, a limit was reached or the time ran out."""
         if self.stats.full():
             return True
         if self.should_stop():
@@ -95,7 +96,7 @@ class Session:
 
 
 def is_elevated() -> bool:
-    """True si el agente corre como administrador (Windows) o root (Linux)."""
+    """True if the agent runs as administrator (Windows) or root (Linux)."""
     try:
         if IS_WINDOWS:
             return bool(ctypes.windll.shell32.IsUserAnAdmin())  # type: ignore[attr-defined]
@@ -115,10 +116,10 @@ class NpcapDevice:
 
 
 class NpcapLibrary:
-    """Adapter: la API en C de Npcap (wpcap.dll, la misma de libpcap) vista como métodos de Python.
+    """Adapter: the C API of Npcap (wpcap.dll, the same as libpcap) seen as Python methods.
 
-    Solo se usa lo necesario para capturar cabeceras sin modo promiscuo. Las pruebas reemplazan esta clase por una
-    falsa con los mismos métodos, sin tocar ningún controlador."""
+    Only what is needed to capture headers without promiscuous mode is used. The tests replace this class with a fake
+    one with the same methods, without touching any driver."""
 
     PCAP_IF_LOOPBACK = 0x1
     ERRBUF_SIZE = 256
@@ -141,14 +142,14 @@ class NpcapLibrary:
 
     @staticmethod
     def load() -> Optional["NpcapLibrary"]:
-        """La biblioteca de Npcap si está instalada; None si no (WiFiSense nunca la instala)."""
+        """The Npcap library if it is installed; None if not (WiFiSense never installs it)."""
         if not IS_WINDOWS:
             return None
         folder = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "Npcap"
         if not (folder / "wpcap.dll").exists():
             return None
         try:
-            os.add_dll_directory(str(folder))  # Packet.dll está en la misma carpeta
+            os.add_dll_directory(str(folder))  # Packet.dll is in the same folder
             return NpcapLibrary(ctypes.CDLL(str(folder / "wpcap.dll")))
         except OSError:
             return None
@@ -192,7 +193,7 @@ class NpcapLibrary:
 
     def open(self, name: str) -> int:
         errbuf = ctypes.create_string_buffer(self.ERRBUF_SIZE)
-        handle = self.dll.pcap_open_live(name.encode(), SNAPLEN, 0, READ_TIMEOUT_MS, errbuf)  # 0: sin promiscuo
+        handle = self.dll.pcap_open_live(name.encode(), SNAPLEN, 0, READ_TIMEOUT_MS, errbuf)  # 0: no promiscuous mode
         if not handle:
             raise CaptureFailed(_failure_of(errbuf.value), _text(errbuf.value))
         return handle
@@ -201,7 +202,7 @@ class NpcapLibrary:
         return self.dll.pcap_datalink(ctypes.c_void_p(handle))
 
     def next(self, handle: int) -> tuple[int, float, bytes, int]:
-        """(1 paquete | 0 nada todavía | -1 error, momento, bytes guardados, largo original)."""
+        """(1 packet | 0 nothing yet | -1 error, moment, stored bytes, original length)."""
         header = ctypes.POINTER(self._Header)()
         data = ctypes.POINTER(ctypes.c_ubyte)()
         status = self.dll.pcap_next_ex(ctypes.c_void_p(handle), ctypes.byref(header), ctypes.byref(data))
@@ -223,7 +224,7 @@ class NpcapLibrary:
         self.dll.pcap_close(ctypes.c_void_p(handle))
 
     def can_monitor(self, name: str) -> Optional[bool]:
-        """Si la tarjeta declara modo monitor (solo se pregunta; nunca se activa)."""
+        """Whether the card declares monitor mode (it is only asked; never turned on)."""
         errbuf = ctypes.create_string_buffer(self.ERRBUF_SIZE)
         handle = self.dll.pcap_create(name.encode(), errbuf)
         if not handle:
@@ -251,7 +252,7 @@ def _failure_of(message) -> str:
 
 
 class NpcapBackend:
-    """Npcap (npcap.com), si el usuario lo instaló (por ejemplo con Wireshark). Por defecto no necesita administrador."""
+    """Npcap (npcap.com), if the user installed it (for example with Wireshark). By default it needs no administrator."""
     code = "NPCAP"
 
     def __init__(self, library_loader: Callable[[], Optional[NpcapLibrary]] = NpcapLibrary.load):
@@ -278,7 +279,7 @@ class NpcapBackend:
 
     @staticmethod
     def pick(devices: list[NpcapDevice], own_ip: Optional[str]) -> NpcapDevice:
-        """La interfaz por la que este computador sale a la red (la que tiene su IP); si no, la primera."""
+        """The interface this computer uses to reach the network (the one with its IP); otherwise the first one."""
         for device in devices:
             if own_ip and own_ip in device.addresses:
                 return device
@@ -314,7 +315,7 @@ Runner = Callable[[list[str], float], "subprocess.CompletedProcess"]
 
 
 def run(args: list[str], timeout: float = COMMAND_TIMEOUT) -> subprocess.CompletedProcess:
-    """Ejecuta una herramienta del sistema con sus argumentos separados (nunca a través de una consola)."""
+    """Runs a system tool with its arguments separated (never through a console)."""
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     return subprocess.run(args, capture_output=True, timeout=timeout, creationflags=flags, check=False)
 
@@ -323,9 +324,9 @@ LOST_EVENTS = re.compile(r"(?i)(?:lost events|eventos perdidos)\D{0,20}(\d+)")
 
 
 class PktmonBackend:
-    """pktmon, el monitor de paquetes que viene con Windows 10 (versión 1809 o posterior) y 11. Necesita que el
-    agente corra como administrador. Escribe un .etl temporal que se convierte a .pcapng para contarlo; ambos se
-    borran al terminar (capture_files.TempCapture)."""
+    """pktmon, the packet monitor that comes with Windows 10 (version 1809 or later) and 11. It needs the agent to run as
+    administrator. It writes a temporary .etl that is converted to .pcapng to be counted; both are deleted at the end
+    (capture_files.TempCapture)."""
     code = "PKTMON"
 
     def __init__(self, runner: Runner = run, which: Callable[[str], Optional[str]] = shutil.which,
@@ -356,8 +357,8 @@ class PktmonBackend:
         if not etl.exists():
             raise CaptureFailed("CAPTURE_ERROR", "pktmon no escribió el archivo de la captura.")
         self._convert(etl, pcapng)
-        # el archivo se lee después de detener pktmon: el motivo de la parada se guarda y se lee todo lo capturado,
-        # salvo que al contar se alcance el límite de paquetes o de bytes
+        # the file is read after stopping pktmon: the reason of the stop is kept and everything captured is read,
+        # unless the count reaches the limit of packets or of bytes
         why_stopped, session.stats.stop_reason = session.stats.stop_reason, None
         summary = pcap_files.FileSummary()
         try:
@@ -401,11 +402,11 @@ class PktmonBackend:
             raise CaptureFailed("CAPTURE_ERROR", f"No se pudo ejecutar pktmon: {error}")
 
 
-# ------------------------------------------------------------------------------------------ sockets del sistema
+# ---------------------------------------------------------------------------------------- sockets of the system
 
 class _SocketBackend:
-    """Base de las capturas con un socket del sistema: leer hasta que haya que parar, con un tiempo de espera corto
-    para revisar los límites aunque no lleguen paquetes."""
+    """Base of the captures with a socket of the system: read until it has to stop, with a short timeout to check the
+    limits even when no packets arrive."""
     code = ""
     link_type = packet_parser.LINK_RAW
 
@@ -453,18 +454,18 @@ class _SocketBackend:
                 kept = self.frame(data, address)
                 if kept is not None:
                     session.stats.add(packet_parser.parse(kept[:SNAPLEN], self.link_type, len(data)), session.wall())
-            return Run(name)  # el sistema no informa paquetes perdidos por un socket: queda desconocido
+            return Run(name)  # the system does not report packets dropped by a socket: it stays unknown
         finally:
             self.close_socket(sock)
 
 
 class RawSocketBackend(_SocketBackend):
-    """Socket sin procesar de Windows (SIO_RCVALL): los paquetes IP de este computador, sin cabecera Ethernet ni ARP.
-    Necesita administrador."""
+    """Windows raw socket (SIO_RCVALL): the IP packets of this computer, without Ethernet header or ARP. Needs
+    administrator."""
     code = "RAW_SOCKET"
     link_type = packet_parser.LINK_RAW
 
-    def open_socket(self, own_ip: Optional[str]) -> tuple[socket.socket, str]:  # pragma: no cover - solo Windows
+    def open_socket(self, own_ip: Optional[str]) -> tuple[socket.socket, str]:  # pragma: no cover - Windows only
         if not IS_WINDOWS:
             raise CaptureFailed("UNSUPPORTED_OS", "El socket sin procesar de captura es de Windows.")
         if not own_ip:
@@ -477,9 +478,9 @@ class RawSocketBackend(_SocketBackend):
         except OSError:
             sock.close()
             raise
-        return sock, "Socket sin procesar (IP)"  # nunca la IP: el nombre de la interfaz llega al servidor
+        return sock, "Socket sin procesar (IP)"  # never the IP: the name of the interface reaches the server
 
-    def close_socket(self, sock: socket.socket) -> None:  # pragma: no cover - solo Windows
+    def close_socket(self, sock: socket.socket) -> None:  # pragma: no cover - Windows only
         try:
             sock.ioctl(socket.SIO_RCVALL, socket.RCVALL_OFF)  # type: ignore[attr-defined]
         except (OSError, AttributeError):
@@ -492,8 +493,8 @@ ETH_P_ALL = 0x0003
 
 
 class PacketSocketBackend(_SocketBackend):
-    """Socket de paquetes de Linux (AF_PACKET) en la interfaz de la ruta por defecto. Necesita root o CAP_NET_RAW.
-    Sin modo promiscuo: los paquetes para otros equipos que la tarjeta descarte nunca llegan."""
+    """Linux packet socket (AF_PACKET) on the interface of the default route. Needs root or CAP_NET_RAW. No
+    promiscuous mode: the packets for other devices that the card discards never arrive."""
     code = "PACKET_SOCKET"
     link_type = packet_parser.LINK_ETHERNET
 
@@ -516,14 +517,14 @@ class PacketSocketBackend(_SocketBackend):
         return sock, name
 
     def frame(self, data: bytes, address) -> Optional[bytes]:
-        # address = (interfaz, protocolo, tipo de paquete, ...): lo dirigido a otro equipo no se cuenta
+        # address = (interface, protocol, packet type, ...): what is addressed to another device is not counted
         if isinstance(address, tuple) and len(address) > 2 and address[2] == PACKET_OTHERHOST:
             return None
         return data
 
 
 def default_interface(route_text: Optional[str] = None) -> Optional[str]:
-    """La interfaz de la ruta por defecto en Linux (/proc/net/route)."""
+    """The interface of the default route on Linux (/proc/net/route)."""
     if route_text is None:
         try:
             route_text = Path("/proc/net/route").read_text()
@@ -539,8 +540,8 @@ def default_interface(route_text: Optional[str] = None) -> Optional[str]:
 # ----------------------------------------------------------------------------------------------------- Factory
 
 def all_backends() -> list:
-    """En orden de preferencia: Npcap (no necesita administrador y cuenta lo perdido), pktmon, el socket de Windows
-    y, en Linux, el socket de paquetes."""
+    """In order of preference: Npcap (needs no administrator and counts what was dropped), pktmon, the Windows socket
+    and, on Linux, the packet socket."""
     if IS_WINDOWS:
         return [NpcapBackend(), PktmonBackend(), RawSocketBackend()]
     return [PacketSocketBackend()]
@@ -549,13 +550,13 @@ def all_backends() -> list:
 def _check(backend, own_ip: Optional[str]) -> Check:
     try:
         return backend.check(own_ip)
-    except Exception as error:  # una herramienta rota no debe impedir probar las demás
+    except Exception as error:  # a broken tool must not prevent trying the others
         return Check(False, True, "CAPTURE_ERROR", str(error))
 
 
 def choose_backend(backends: Iterable, own_ip: Optional[str]) -> tuple[Optional[object], dict[str, Check]]:
-    """La primera herramienta que se puede usar ahora, y lo que se supo de las revisadas (para explicar si ninguna
-    sirve). Se detiene en la primera que sirve: no hace falta revisar las demás para capturar."""
+    """The first tool that can be used now, and what was learned about the ones checked (to explain why when none
+    works). It stops at the first one that works: the others do not need to be checked to capture."""
     checks: dict[str, Check] = {}
     for backend in backends:
         checks[backend.code] = _check(backend, own_ip)
@@ -565,7 +566,7 @@ def choose_backend(backends: Iterable, own_ip: Optional[str]) -> tuple[Optional[
 
 
 def choose_all(backends: Iterable, own_ip: Optional[str]) -> tuple[Optional[object], dict[str, Check]]:
-    """Como choose_backend, pero revisa todas (para informar en el reporte cuáles se pueden usar)."""
+    """Like choose_backend, but checks all of them (to report in the report which ones can be used)."""
     chosen, checks = None, {}
     for backend in backends:
         checks[backend.code] = _check(backend, own_ip)
@@ -575,7 +576,7 @@ def choose_all(backends: Iterable, own_ip: Optional[str]) -> tuple[Optional[obje
 
 
 def failure_without_tool(checks: dict[str, Check]) -> str:
-    """El motivo más útil cuando ninguna herramienta sirve: si alguna existe pero falta permiso, es eso."""
+    """The most useful reason when no tool works: if one exists but a permission is missing, that is it."""
     if any(check.present and check.reason == "PERMISSION_DENIED" for check in checks.values()):
         return "PERMISSION_DENIED"
     if any(check.present and check.reason == "NO_INTERFACE" for check in checks.values()):

@@ -1,8 +1,8 @@
-"""Ventana del instalador del agente WiFiSense (tkinter, incluido en Python; no hay que instalar nada).
+"""Window of the installer of the WiFiSense agent (tkinter, included in Python; nothing has to be installed).
 
-La persona ve qué hace el agente antes de instalarlo, escribe el código (de Mi Wi-Fi o, para una red del equipo, de
-Redes > Sensor) y decide si arranca con Windows. Si el agente ya está instalado, la misma ventana permite conectarlo a
-otra red con un código nuevo o desinstalarlo.
+The person sees what the agent does before installing it, types the code (from Mi Wi-Fi or, for a team network, from
+Redes > Sensor) and decides whether it starts with Windows. If the agent is already installed, the same window lets them
+connect it to another network with a new code or uninstall it.
 """
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import threading
 import tkinter as tk
 from tkinter import messagebox, ttk
 
-try:  # como paquete (pruebas) o como script suelto (PyInstaller)
+try:  # as a package (tests) or as loose scripts (PyInstaller)
     from agent import windows_install as setup
     from agent import wifisense_agent as agent
     from agent.installation import install_and_pair, needs_update, update_program
@@ -165,7 +165,7 @@ def open_installer() -> None:
 
 
 def confirm_uninstall() -> None:
-    """Lo que ejecuta Windows al elegir Desinstalar en Configuración > Aplicaciones."""
+    """What Windows runs when Uninstall is chosen in Settings > Apps."""
     root = tk.Tk()
     root.withdraw()
     if messagebox.askyesno("Agente WiFiSense", "¿Desinstalar el agente WiFiSense? Dejará de enviar reportes y se "
