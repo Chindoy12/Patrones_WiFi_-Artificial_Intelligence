@@ -1,5 +1,5 @@
-"""Las herramientas de captura (Npcap, pktmon, sockets) con sus fallas, sin instalar ni ejecutar nada real en
-Windows. La última prueba captura de verdad en Linux cuando el entorno lo permite (root y AF_PACKET)."""
+"""The capture tools (Npcap, pktmon, sockets) with their failures, without installing or running anything real on
+Windows. The last test captures for real on Linux when the environment allows it (root and AF_PACKET)."""
 import os
 import socket
 import subprocess
@@ -34,7 +34,7 @@ def session(limits=Limits(5, 1000, 10_000_000), stop=lambda: False, temp=None, c
 # ------------------------------------------------------------------------------------------------------ Npcap
 
 class FakeNpcap:
-    """Los mismos métodos que NpcapLibrary, con paquetes de prueba y un reloj que avanza con cada lectura."""
+    """The same methods as NpcapLibrary, with test packets and a clock that advances with each reading."""
 
     def __init__(self, clock, frames=(), open_error=None, fail_at=None, monitor=False):
         self.clock, self.frames, self.open_error, self.fail_at, self.monitor = clock, list(frames), open_error, \
@@ -129,13 +129,13 @@ def test_asking_to_stop_ends_the_capture_as_cancelled():
 
     backends.NpcapBackend(lambda: library).capture(s)
 
-    assert s.stats.stop_reason == "CANCELLED" and s.stats.packets == 2  # leídos antes de notar el pedido
+    assert s.stats.stop_reason == "CANCELLED" and s.stats.packets == 2  # read before noticing the request
 
 
 # ------------------------------------------------------------------------------------------------------ pktmon
 
 class FakePktmon:
-    """Responde como pktmon y escribe los archivos que pktmon escribiría (con paquetes sintéticos)."""
+    """Answers like pktmon and writes the files pktmon would write (with synthetic packets)."""
 
     def __init__(self, frames, start_fails=False, modern=True, stop_output=b"Lost events: 4\r\n", hang=None):
         self.frames, self.start_fails, self.modern, self.stop_output, self.hang = frames, start_fails, modern, \
@@ -144,7 +144,7 @@ class FakePktmon:
 
     def __call__(self, args, timeout):
         self.calls.append(list(args))
-        assert all(isinstance(a, str) for a in args)  # siempre argumentos separados, nunca una línea de consola
+        assert all(isinstance(a, str) for a in args)  # always separate arguments, never a console line
         verb = args[1]
         if self.hang == verb:
             raise subprocess.TimeoutExpired(args, timeout)
@@ -183,7 +183,7 @@ def test_pktmon_captures_headers_only_of_the_network_cards_and_converts_the_file
     assert start[start.index("--comp") + 1] == "nics" and start[start.index("--pkt-size") + 1] == "128"
     assert [call[1] for call in runner.calls] == ["start", "stop", "etl2pcap"]
     assert s.stats.packets == 2 and run.dropped_by_tool == 4
-    assert temp.removed  # el .etl y el .pcapng se borraron al terminar
+    assert temp.removed  # the .etl and the .pcapng were deleted at the end
 
 
 def test_pktmon_on_windows_10_1809_uses_its_older_commands(tmp_path):
@@ -230,14 +230,14 @@ def test_pktmon_reading_stops_at_the_packet_limit(tmp_path):
         run = pktmon(runner).capture(s)
 
     assert s.stats.packets == 5 and s.stats.stop_reason == "PACKET_LIMIT"
-    assert run.dropped_by_tool is None  # pktmon no lo dijo: desconocido, no cero
+    assert run.dropped_by_tool is None  # pktmon did not say: unknown, not zero
 
 
 def test_pktmon_lost_events_are_read_in_spanish_too():
     assert backends.LOST_EVENTS.search("Eventos perdidos: 12").group(1) == "12"
 
 
-# ------------------------------------------------------------------------------------------------- elegir una
+# ----------------------------------------------------------------------------------------------- choosing one
 
 class Fixed:
     def __init__(self, code, check):
@@ -345,8 +345,8 @@ def can_capture_for_real() -> bool:
 
 @pytest.mark.skipif(not can_capture_for_real(), reason="captura real: necesita Linux con root y AF_PACKET")
 def test_a_real_capture_on_the_loopback_interface_counts_the_packets_sent():
-    """Prueba de integración en este mismo computador: se envían 20 datagramas UDP a 127.0.0.1:5353... por la
-    interfaz de bucle local y la captura real los cuenta como mDNS, sin guardar su contenido."""
+    """Integration test on this same computer: 20 UDP datagrams are sent to 127.0.0.1:5353... through the loopback
+    interface and the real capture counts them as mDNS, without keeping their content."""
     stats = CaptureStats(Limits(3, 1000, 10 ** 7), frozenset({"127.0.0.1"}))
     backend = backends.PacketSocketBackend(interface=lambda: "lo")
     s = backends.Session(stats, lambda: False, own_ip="127.0.0.1")

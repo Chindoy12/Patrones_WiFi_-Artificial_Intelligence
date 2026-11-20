@@ -1,5 +1,5 @@
-"""Lectura de una captura: hechos contados aparte de inferencias con su confianza, sin afirmar nunca más de lo que
-los números muestran."""
+"""Reading a capture: counted facts apart from inferences with their confidence, never claiming more than the numbers
+show."""
 import pytest
 
 from app import traffic

@@ -1,4 +1,4 @@
-"""Lectura de un escaneo de redes cercanas: hechos de lo que vio la antena e inferencias con su confianza."""
+"""Reading a scan of nearby networks: facts of what the antenna saw and inferences with their confidence."""
 import json
 from pathlib import Path
 

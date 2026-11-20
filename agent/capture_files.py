@@ -1,12 +1,12 @@
-"""Archivos temporales de las capturas y su política de retención.
+"""Temporary files of the captures and their retention policy.
 
-pktmon escribe lo que captura en un archivo (.etl) que luego se convierte a .pcapng para contarlo. Esos archivos:
-  * viven en una carpeta propia del usuario que ejecuta el agente (en Windows dentro de %LOCALAPPDATA%, que ya es
-    privada de cada usuario; en Linux con permisos 700), nunca en una carpeta compartida;
-  * guardan como mucho 128 bytes de cada paquete (cabeceras, no contenido);
-  * se borran apenas termina el conteo, haya salido bien o mal (TempCapture es un administrador de contexto);
-  * si el agente se cerró a mitad de una captura, los restos de más de una hora se borran al iniciar (purge_old).
-Nunca se envían al servidor ni se pueden descargar desde la página: el servidor solo recibe los conteos.
+pktmon writes what it captures to a file (.etl) that is then converted to .pcapng to be counted. Those files:
+  * live in a folder of the user who runs the agent (on Windows inside %LOCALAPPDATA%, which is already private to
+    each user; on Linux with permissions 700), never in a shared folder;
+  * keep at most 128 bytes of each packet (headers, not content);
+  * are deleted as soon as the count ends, whether it went well or not (TempCapture is a context manager);
+  * if the agent closed in the middle of a capture, the leftovers older than an hour are deleted on start (purge_old).
+They are never sent to the server nor can they be downloaded from the page: the server only receives the counts.
 """
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ IS_WINDOWS = os.name == "nt"
 
 
 def captures_dir(base: Optional[Path] = None) -> Path:
-    """Carpeta de las capturas temporales, creada solo para este usuario."""
+    """Folder of the temporary captures, created only for this user."""
     if base is None:
         root = os.environ.get("LOCALAPPDATA") if IS_WINDOWS else os.environ.get("XDG_CACHE_HOME")
         base = Path(root or Path.home() / ".cache") / "WiFiSense"
@@ -34,7 +34,7 @@ def captures_dir(base: Optional[Path] = None) -> Path:
 
 
 def purge_old(folder: Path, now: Optional[float] = None, max_age: int = RETENTION_SECONDS) -> int:
-    """Borra lo que quedó de capturas interrumpidas (más viejo que ``max_age`` segundos). Devuelve cuántos borró."""
+    """Deletes what was left of interrupted captures (older than ``max_age`` seconds). Returns how many it deleted."""
     now = time.time() if now is None else now
     removed = 0
     for entry in folder.iterdir() if folder.exists() else ():
@@ -52,7 +52,7 @@ def purge_old(folder: Path, now: Optional[float] = None, max_age: int = RETENTIO
 
 
 class TempCapture:
-    """Una carpeta para una sola captura, que se borra entera al salir del bloque ``with``, incluso con un error."""
+    """A folder for a single capture, deleted entirely when the ``with`` block ends, even after an error."""
 
     def __init__(self, folder: Path):
         self.path = folder / f"captura-{int(time.time())}-{secrets.token_hex(4)}"

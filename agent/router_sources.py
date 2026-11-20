@@ -1,20 +1,21 @@
-"""Lo que el router sabe de los equipos de la red, por las vías que no necesitan su clave (agente 2.0.0).
+"""What the router knows about the devices of the network, through the ways that do not need its password (agent
+2.0.0).
 
-Detectar el router no es administrarlo. La lista oficial de clientes, bloquear un equipo o cambiar la contraseña del
-Wi-Fi necesitan entrar al router con su clave de administrador, y cada fabricante (y cada operador) lo hace distinto.
-WiFiSense todavía no tiene una integración oficial con ningún modelo, así que esas operaciones no existen aquí y la
-página explica cómo hacerlas en el propio router. Esta abstracción deja el lugar listo para agregarlas sin tocar el
-resto del agente:
+Detecting the router is not administering it. The official list of clients, blocking a device or changing the Wi-Fi
+password need to log in to the router with its administrator password, and every maker (and every provider) does it
+differently. WiFiSense does not have an official integration with any model yet, so those operations do not exist here
+and the page explains how to do them on the router itself. This abstraction leaves the place ready to add them without
+touching the rest of the agent:
 
-  * ``RouterSource`` (Strategy): lo que una fuente puede hacer. Hoy solo ``names``.
-  * ``GatewayDnsSource`` (Adapter del protocolo DNS): muchos routers caseros (dnsmasq: TP-Link, ASUS, OpenWrt y varios
-    de operador) guardan el nombre que cada equipo dijo al pedir dirección (DHCP) y lo responden si se les pregunta
-    por la IP al revés (PTR). Es solo lectura, no usa clave, y se le pregunta directamente al router: el DNS que tenga
-    configurado el computador puede ser el del operador, que no conoce los equipos de la casa.
-  * ``source_for`` (Factory): elige la fuente según el fabricante y el modelo del router. Una integración futura
-    (con autorización del dueño y por un mecanismo oficial del fabricante) sería otra clase aquí.
+  * ``RouterSource`` (Strategy): what a source can do. Today only ``names``.
+  * ``GatewayDnsSource`` (Adapter of the DNS protocol): many home routers (dnsmasq: TP-Link, ASUS, OpenWrt and several
+    from providers) keep the name each device gave when asking for an address (DHCP) and answer it when asked for the
+    reversed IP (PTR). It is read only, uses no password, and the router is asked directly: the DNS configured on the
+    computer may be the provider's, which does not know the devices of the home.
+  * ``source_for`` (Factory): chooses the source by the maker and model of the router. A future integration (with the
+    owner's authorization and through an official mechanism of the maker) would be another class here.
 
-Nunca se guarda ni se envía la clave del router: hoy no se pide.
+The password of the router is never stored nor sent: today it is not even asked.
 """
 from __future__ import annotations
 
@@ -24,26 +25,31 @@ import struct
 import time
 from typing import Iterable, Optional, Protocol
 
+try:  # the agent as a package (tests) or as loose scripts (PyInstaller, python wifisense_agent.py)
+    from agent.dns_wire import read_name
+except ImportError:  # pragma: no cover
+    from dns_wire import read_name
+
 DNS_PORT = 53
 TYPE_PTR, CLASS_IN = 12, 1
 MAX_QUERIES = 1024
 
 
 class NotSupported(Exception):
-    """La operación no existe para este router: no hay una integración oficial."""
+    """The operation does not exist for this router: there is no official integration."""
 
 
 class RouterSource(Protocol):
     code: str
 
     def names(self, ips: Iterable[str]) -> dict[str, str]:
-        """IP -> nombre que el router conoce. Lo que no conozca, no aparece."""
+        """IP -> name the router knows. Whatever it does not know does not appear."""
 
     def clients(self) -> list[dict]:
-        """La lista oficial de clientes del router (activos e históricos)."""
+        """The official list of clients of the router (active and past)."""
 
     def block(self, device: str) -> None:
-        """Saca un equipo de la red en el router."""
+        """Removes a device from the network on the router."""
 
 
 def reverse_name(ip: str) -> str:
@@ -61,39 +67,17 @@ def encode_name(name: str) -> bytes:
 
 
 def ptr_query(ip: str, query_id: int) -> bytes:
-    """Pregunta PTR estándar con recursión pedida (el router responde de su propia tabla)."""
+    """Standard PTR question with recursion desired (the router answers from its own table)."""
     return struct.pack("!HHHHHH", query_id, 0x0100, 1, 0, 0, 0) + encode_name(reverse_name(ip)) + struct.pack(
         "!HH", TYPE_PTR, CLASS_IN)
 
 
-def read_name(data: bytes, offset: int, depth: int = 0) -> tuple[str, int]:
-    """Nombre DNS con compresión (punteros), protegido contra bucles y paquetes cortados."""
-    if depth > 10:
-        raise ValueError("demasiados punteros")
-    labels = []
-    while True:
-        if offset >= len(data):
-            raise ValueError("nombre cortado")
-        length = data[offset]
-        if length == 0:
-            return ".".join(labels), offset + 1
-        if length & 0xC0 == 0xC0:
-            if offset + 1 >= len(data):
-                raise ValueError("puntero cortado")
-            pointer = ((length & 0x3F) << 8) | data[offset + 1]
-            name, _ = read_name(data, pointer, depth + 1)
-            labels.append(name)
-            return ".".join(label for label in labels if label), offset + 2
-        labels.append(data[offset + 1:offset + 1 + length].decode("utf-8", "replace"))
-        offset += 1 + length
-
-
 def parse_ptr_answer(data: bytes) -> tuple[int, Optional[str]]:
-    """(id de la pregunta, nombre) de una respuesta PTR; nombre None si el router no lo conoce o la respuesta es rara."""
+    """(question id, name) of a PTR answer; name None when the router does not know it or the answer is odd."""
     if len(data) < 12:
         raise ValueError("respuesta corta")
     query_id, flags, questions, answers = struct.unpack("!HHHH", data[:8])
-    if not flags & 0x8000 or flags & 0x000F:  # no es respuesta, o trae error (por ejemplo NXDOMAIN)
+    if not flags & 0x8000 or flags & 0x000F:  # not an answer, or it carries an error (for example NXDOMAIN)
         return query_id, None
     offset = 12
     for _ in range(questions):
@@ -113,8 +97,8 @@ def parse_ptr_answer(data: bytes) -> tuple[int, Optional[str]]:
 
 
 class GatewayDnsSource:
-    """Pregunta al DNS del router el nombre de cada IP, todas de una vez por el mismo socket (rápido aunque sean
-    cientos), y espera como mucho ``timeout`` segundos en total."""
+    """Asks the DNS of the router the name of each IP, all at once through the same socket (fast even for hundreds),
+    and waits at most ``timeout`` seconds in total."""
     code = "GATEWAY_DNS"
 
     def __init__(self, gateway: str, timeout: float = 1.5, port: int = DNS_PORT,
@@ -146,7 +130,7 @@ class GatewayDnsSource:
                     continue
                 except OSError:
                     break
-                if sender[0] != self.gateway:  # solo cuenta lo que responde el router mismo
+                if sender[0] != self.gateway:  # only what the router itself answers counts
                     continue
                 try:
                     query_id, name = parse_ptr_answer(data)
@@ -166,16 +150,16 @@ class GatewayDnsSource:
 
 def source_for(gateway: Optional[str], vendor: Optional[str] = None, model: Optional[str] = None
                ) -> Optional[RouterSource]:
-    """La fuente para este router. Hoy, para cualquier fabricante, solo la lectura de nombres por su DNS; cuando
-    exista una integración oficial de un modelo, se elegiría aquí por ``vendor`` y ``model``."""
+    """The source for this router. Today, for any maker, only reading names through its DNS; when an official
+    integration of a model exists, it would be chosen here by ``vendor`` and ``model``."""
     if not gateway:
         return None
     return GatewayDnsSource(gateway)
 
 
 SUPPORTED_OPERATIONS = {
-    "READ_NAMES": True,       # por el DNS del router, sin clave
-    "LIST_CLIENTS": False,    # necesita integración oficial
-    "BLOCK_DEVICE": False,    # necesita integración oficial
-    "CHANGE_PASSWORD": False,  # nunca desde WiFiSense: se hace en el router
+    "READ_NAMES": True,       # through the DNS of the router, without a password
+    "LIST_CLIENTS": False,    # needs an official integration
+    "BLOCK_DEVICE": False,    # needs an official integration
+    "CHANGE_PASSWORD": False,  # never from WiFiSense: it is done on the router
 }

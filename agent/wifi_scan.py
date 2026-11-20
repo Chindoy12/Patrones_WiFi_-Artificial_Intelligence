@@ -1,21 +1,22 @@
-"""Escaneo de las redes Wi-Fi cercanas: las que alcanza a ver la antena Wi-Fi de este computador.
+"""Scan of the nearby Wi-Fi networks: the ones the Wi-Fi antenna of this computer can see.
 
-Cómo funciona:
-  * En Windows se le pide al sistema un escaneo nuevo (WlanScan, de wlanapi.dll, sin permisos de administrador) y,
-    unos segundos después, se lee la lista con ``netsh wlan show networks mode=bssid``. Si no se pudo pedir el
-    escaneo nuevo se lee la última lista que tenga Windows, y el resultado lo dice (``fresh`` = False).
-  * En Linux se usa ``nmcli dev wifi list --rescan yes`` (y, si no deja volver a escanear tan seguido, la última lista).
-  * Cada punto de acceso (BSSID) sale como un diccionario con lo que el sistema dijo de él. Lo que el sistema no dijo
-    queda en None: nada se inventa (por ejemplo, Windows da la señal en %, así que la señal en dBm queda vacía).
-  * El BSSID nunca sale del computador: se envía su huella con la sal de esta instalación (como los equipos de la
-    red) y solo su último byte, para que el usuario reconozca su propio router por la etiqueta.
-  * Nunca se leen ni se exportan las contraseñas de los perfiles Wi-Fi.
+How it works:
+  * On Windows the system is asked for a new scan (WlanScan, from wlanapi.dll, without administrator permissions) and,
+    a few seconds later, the list is read with ``netsh wlan show networks mode=bssid``. If the new scan could not be
+    asked, the last list Windows has is read, and the result says so (``fresh`` = False).
+  * On Linux ``nmcli dev wifi list --rescan yes`` is used (and, if it does not allow rescanning that often, the last
+    list).
+  * Each access point (BSSID) comes out as a dictionary with what the system said about it. What the system did not
+    say stays None: nothing is invented (for example, Windows gives the signal in %, so the signal in dBm stays empty).
+  * The BSSID never leaves the computer: its fingerprint with the salt of this installation is sent (like the devices
+    of the network) and only its last byte, so the user can recognise their own router by the label.
+  * The passwords of the Wi-Fi profiles are never read nor exported.
 
-Que una red aparezca no quiere decir que sea del usuario ni que pueda conectarse a ella: solo que la antena la vio.
-Tampoco es la lista de todas las redes que existen: solo las que este adaptador alcanzó a oír en ese momento.
+That a network shows up does not mean it belongs to the user or that they can connect to it: only that the antenna
+saw it. Nor is it the list of every network that exists: only the ones this adapter could hear at that moment.
 
-Hay dos herramientas (Strategy): ``NetshScanner`` y ``NmcliScanner``; ``scanner_for`` elige la del sistema
-(Factory). Las dos devuelven el mismo resultado (Adapter), así que el resto del agente no sabe cuál se usó.
+There are two tools (Strategy): ``NetshScanner`` and ``NmcliScanner``; ``scanner_for`` picks the one of the system
+(Factory). Both return the same result (Adapter), so the rest of the agent does not know which one was used.
 """
 from __future__ import annotations
 
@@ -27,43 +28,33 @@ import sys
 import time
 from typing import Callable, Optional
 
-try:  # el agente como paquete (pruebas) o como script suelto (PyInstaller, python wifisense_agent.py)
-    from agent.wifi_text import authentication_of, band_of, cipher_of, first_number, key_values, normalize_key, \
-        split_nmcli
+try:  # the agent as a package (tests) or as loose scripts (PyInstaller, python wifisense_agent.py)
+    from agent.wifi_text import authentication_of, band_of, cipher_of, console_text, first_number, key_values, \
+        normalize_key, split_nmcli
 except ImportError:  # pragma: no cover
-    from wifi_text import authentication_of, band_of, cipher_of, first_number, key_values, normalize_key, \
-        split_nmcli
+    from wifi_text import authentication_of, band_of, cipher_of, console_text, first_number, key_values, \
+        normalize_key, split_nmcli
 
-COMMAND_TIMEOUT = 20      # segundos que puede tardar netsh o nmcli antes de cancelarlo
-FRESH_SCAN_WAIT = 4.0     # segundos que Windows necesita para terminar el escaneo que se le pidió
-MAX_ACCESS_POINTS = 300   # el servidor no acepta más en un solo escaneo
+COMMAND_TIMEOUT = 20      # seconds netsh or nmcli may take before it is cancelled
+FRESH_SCAN_WAIT = 4.0     # seconds Windows needs to finish the scan it was asked for
+MAX_ACCESS_POINTS = 300   # the server does not accept more in a single scan
 FAILURES = ("NO_ADAPTER", "ADAPTER_OFF", "SERVICE_OFF", "LOCATION_PERMISSION", "COMMAND_FAILED", "TIMEOUT",
             "UNREADABLE_OUTPUT", "UNSUPPORTED_OS")
 MAC = re.compile(r"^[0-9a-f]{2}(?::[0-9a-f]{2}){5}$")
 
-# --------------------------------------------------------------------------------------------- comando del sistema
+# -------------------------------------------------------------------------------------------------- system command
 
 
 class CommandResult:
-    """Lo que respondió un comando: su código de salida, su texto y si se canceló por tiempo o no existe."""
+    """What a command answered: its exit code, its text and whether it timed out or does not exist."""
 
     def __init__(self, code: Optional[int], text: str, timed_out: bool = False, missing: bool = False):
         self.code, self.text, self.timed_out, self.missing = code, text, timed_out, missing
 
 
-def decode(raw: bytes) -> str:
-    """netsh escribe en la página de códigos de la consola (cp850 en español); se prueba UTF-8 primero."""
-    for encoding in ("utf-8", "oem", "cp850", "latin-1"):
-        try:
-            return raw.decode(encoding)
-        except (UnicodeDecodeError, LookupError):
-            continue
-    return raw.decode("latin-1", errors="replace")  # pragma: no cover (latin-1 siempre decodifica)
-
-
 def run(args: list[str], timeout: float = COMMAND_TIMEOUT) -> CommandResult:
-    """Ejecuta un comando con sus argumentos por separado (nunca con el shell, así un nombre de red no puede inyectar
-    nada) y con tiempo límite."""
+    """Runs a command with its arguments separated (never through the shell, so a network name cannot inject anything)
+    and with a time limit."""
     try:
         done = subprocess.run(args, capture_output=True, timeout=timeout,
                               creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
@@ -73,13 +64,13 @@ def run(args: list[str], timeout: float = COMMAND_TIMEOUT) -> CommandResult:
         return CommandResult(None, "", missing=True)
     except (OSError, subprocess.SubprocessError) as error:
         return CommandResult(None, str(error))
-    return CommandResult(done.returncode, decode(done.stdout) + decode(done.stderr))
+    return CommandResult(done.returncode, console_text(done.stdout) + console_text(done.stderr))
 
 
-# ------------------------------------------------------------------------------------------- errores de Windows
+# ----------------------------------------------------------------------------------------------- Windows errors
 
-# Lo que netsh responde (en español o en inglés) cuando no puede escanear, y el motivo que se le envía al servidor.
-# Se revisan en este orden: el permiso de ubicación también menciona la interfaz, por ejemplo.
+# What netsh answers (in Spanish or in English) when it cannot scan, and the reason sent to the server.
+# They are checked in this order: the location permission also mentions the interface, for example.
 FAILURE_HINTS = (
     ("LOCATION_PERMISSION", ("location permission", "location services", "permiso de ubicaci", "servicios de ubicaci")),
     ("SERVICE_OFF", ("wlansvc", "autoconfig service", "configuracion automatica de wlan",
@@ -91,7 +82,7 @@ RADIO_OFF = ("software off", "hardware off", "software apagado", "hardware apaga
 
 
 def failure_of(text: str) -> Optional[str]:
-    """El motivo por el que netsh no pudo escanear, según su mensaje; None si el mensaje no es de error."""
+    """The reason why netsh could not scan, according to its message; None if the message is not an error."""
     lower = (text or "").lower()
     for reason, hints in FAILURE_HINTS:
         if any(hint in lower for hint in hints):
@@ -100,7 +91,7 @@ def failure_of(text: str) -> Optional[str]:
 
 
 def radio_off(interfaces_text: str) -> bool:
-    """El Wi-Fi está apagado (con el botón del teclado, el modo avión o en Configuración) según
+    """The Wi-Fi is turned off (with the keyboard button, airplane mode or in Settings) according to
     'netsh wlan show interfaces'."""
     lower = (interfaces_text or "").lower()
     return any(hint in lower for hint in RADIO_OFF)
@@ -108,9 +99,9 @@ def radio_off(interfaces_text: str) -> bool:
 
 # ------------------------------------------------------------------------------------------------- lectura (netsh)
 
-# Claves exactas de 'netsh wlan show networks mode=bssid' ya normalizadas (sin tildes, espacios ni números), en
-# inglés y en español, incluso cuando la consola dañó la tilde ('Se¤al' -> 'seal'). Son exactas a propósito:
-# Windows 11 agrega 'Channel Utilization', que no es el canal.
+# Exact keys of 'netsh wlan show networks mode=bssid' already normalized (without accents, spaces or numbers), in
+# English and in Spanish, even when the console broke the accent ('Se¤al' -> 'seal'). They are exact on purpose:
+# Windows 11 adds 'Channel Utilization', which is not the channel.
 SCAN_KEYS = {
     "interface": {"interfacename", "nombredelainterfaz", "nombredeinterfaz"},
     "ssid": {"ssid"},
@@ -133,8 +124,8 @@ def scan_key(key: str) -> Optional[str]:
 
 
 def clean_ssid(value: Optional[str]) -> Optional[str]:
-    """El nombre tal como lo anuncia la red (tildes, emoji y comillas incluidos), sin caracteres de control; vacío es
-    una red oculta."""
+    """The name as the network announces it (accents, emoji and quotes included), without control characters; empty is
+    a hidden network."""
     if value is None:
         return None
     visible = "".join(c for c in value if c.isprintable())
@@ -142,8 +133,8 @@ def clean_ssid(value: Optional[str]) -> Optional[str]:
 
 
 def parse_netsh_scan(text: str) -> tuple[Optional[str], list[dict]]:
-    """(adaptador, puntos de acceso) de 'netsh wlan show networks mode=bssid'. Cada punto de acceso trae la MAC
-    todavía: ``describe`` la cambia por su huella antes de que salga del computador."""
+    """(adapter, access points) of 'netsh wlan show networks mode=bssid'. Each access point still carries the MAC:
+    ``describe`` replaces it with its fingerprint before it leaves the computer."""
     interface, found = None, []
     network: dict = {}
     current: Optional[dict] = None
@@ -167,7 +158,7 @@ def parse_netsh_scan(text: str) -> tuple[Optional[str], list[dict]]:
 
 
 def access_point(raw: dict) -> dict:
-    """Un punto de acceso con los nombres y unidades que espera el servidor. Lo que falte queda en None."""
+    """An access point with the names and units the server expects. Whatever is missing stays None."""
     channel = first_number(raw.get("channel") or "")
     channel = int(channel) if channel and 1 <= channel <= 233 else None
     signal = first_number(raw.get("signal") or "")
@@ -176,7 +167,7 @@ def access_point(raw: dict) -> dict:
         "mac": raw["mac"],
         "ssid": raw.get("ssid"),
         "signalPercent": int(signal) if signal is not None and 0 <= signal <= 100 else None,
-        "signalDbm": None,  # netsh solo da el porcentaje: no se calcula
+        "signalDbm": None,  # netsh only gives the percentage: it is not computed
         "channel": channel,
         "band": band_of(raw.get("band") or "", channel) if raw.get("band") or channel else None,
         "radioType": (raw.get("radio") or "")[:20] or None,
@@ -187,8 +178,8 @@ def access_point(raw: dict) -> dict:
 
 
 def connected_bssid(interfaces_text: str) -> Optional[str]:
-    """La MAC del punto de acceso al que está conectado este computador, según 'netsh wlan show interfaces'
-    ('BSSID' en Windows 10 y 'AP BSSID' en Windows 11), o None si no está conectado."""
+    """The MAC of the access point this computer is connected to, according to 'netsh wlan show interfaces' ('BSSID' on
+    Windows 10 and 'AP BSSID' on Windows 11), or None if it is not connected."""
     state, bssid = None, None
     for key, value in key_values(interfaces_text or ""):
         normalized = normalize_key(key)
@@ -210,7 +201,7 @@ NMCLI_FIELDS = "IN-USE,BSSID,SSID,CHAN,FREQ,SIGNAL,SECURITY"
 
 
 def parse_nmcli_scan(text: str) -> list[dict]:
-    """Puntos de acceso de 'nmcli -t -f IN-USE,BSSID,SSID,CHAN,FREQ,SIGNAL,SECURITY dev wifi list'."""
+    """Access points of 'nmcli -t -f IN-USE,BSSID,SSID,CHAN,FREQ,SIGNAL,SECURITY dev wifi list'."""
     found = []
     for line in (text or "").splitlines():
         parts = split_nmcli(line)
@@ -231,16 +222,16 @@ def parse_nmcli_scan(text: str) -> list[dict]:
     return found
 
 
-# ---------------------------------------------------------------------------------- escaneo nuevo en Windows (API)
+# --------------------------------------------------------------------------------------- new scan on Windows (API)
 
 WLAN_INTERFACE_INFO_SIZE = 532  # GUID (16) + WCHAR[256] (512) + WLAN_INTERFACE_STATE (4)
 
 
 def request_fresh_scan(library=None, sleep: Callable[[float], None] = time.sleep,
                        wait: float = FRESH_SCAN_WAIT) -> bool:
-    """Le pide a Windows que vuelva a buscar redes con cada adaptador Wi-Fi (WlanScan) y espera a que termine. No
-    pide permisos de administrador ni instala nada. False si no se pudo pedir (otro sistema, sin adaptador, servicio
-    detenido o sin permiso): entonces se lee la última lista que tenga Windows."""
+    """Asks Windows to search for networks again with each Wi-Fi adapter (WlanScan) and waits for it to finish. It asks
+    for no administrator permissions and installs nothing. False if it could not be asked (another system, no adapter,
+    service stopped or no permission): then the last list Windows has is read."""
     if library is None:
         if os.name != "nt":
             return False
@@ -258,7 +249,7 @@ def request_fresh_scan(library=None, sleep: Callable[[float], None] = time.sleep
             return False
         try:
             count = ctypes.c_uint32.from_address(interfaces.value).value
-            first = interfaces.value + 8  # dwNumberOfItems y dwIndex van antes de la lista
+            first = interfaces.value + 8  # dwNumberOfItems and dwIndex come before the list
             for index in range(min(count, 16)):
                 guid = ctypes.c_void_p(first + index * WLAN_INTERFACE_INFO_SIZE)
                 asked = library.WlanScan(handle, guid, None, None, None) == 0 or asked
@@ -275,7 +266,7 @@ def request_fresh_scan(library=None, sleep: Callable[[float], None] = time.sleep
 
 
 class ScanOutcome:
-    """Lo que obtuvo una herramienta: los puntos de acceso (con su MAC todavía) o el motivo de la falla."""
+    """What a tool obtained: the access points (still with their MAC) or the reason of the failure."""
 
     def __init__(self, tool: str, access_points: Optional[list] = None, failure: Optional[str] = None,
                  interface: Optional[str] = None, fresh: Optional[bool] = None):
@@ -284,7 +275,7 @@ class ScanOutcome:
 
 
 class NetshScanner:
-    """Windows: escaneo nuevo con WlanScan y lectura con netsh."""
+    """Windows: new scan with WlanScan and reading with netsh."""
     tool = "NETSH"
 
     def __init__(self, runner: Callable[[list[str]], CommandResult] = run,
@@ -303,7 +294,7 @@ class NetshScanner:
             return ScanOutcome(self.tool, failure=reason, fresh=fresh)
         interface, access_points = parse_netsh_scan(listed.text)
         if interface is None and not access_points:
-            # ni el nombre del adaptador: netsh respondió algo que no es la lista (otro error, otro idioma)
+            # not even the name of the adapter: netsh answered something that is not the list (another error, another language)
             return ScanOutcome(self.tool, failure="COMMAND_FAILED" if listed.code else "UNREADABLE_OUTPUT",
                                fresh=fresh)
         interfaces = self.runner(["netsh", "wlan", "show", "interfaces"])
@@ -316,7 +307,7 @@ class NetshScanner:
 
 
 class NmcliScanner:
-    """Linux con NetworkManager."""
+    """Linux with NetworkManager."""
     tool = "NMCLI"
 
     def __init__(self, runner: Callable[[list[str]], CommandResult] = run):
@@ -326,7 +317,7 @@ class NmcliScanner:
         base = ["nmcli", "-t", "-f", NMCLI_FIELDS, "dev", "wifi", "list"]
         listed, fresh = self.runner(base + ["--rescan", "yes"]), True
         if not listed.timed_out and not listed.missing and listed.code:
-            # NetworkManager no deja volver a escanear tan seguido: se lee la última lista
+            # NetworkManager does not allow rescanning that often: the last list is read
             listed, fresh = self.runner(base + ["--rescan", "no"]), False
         if listed.timed_out:
             return ScanOutcome(self.tool, failure="TIMEOUT", fresh=fresh)
@@ -341,7 +332,7 @@ class NmcliScanner:
 
 
 def scanner_for(platform: str = sys.platform):
-    """La herramienta del sistema, o None si este sistema no tiene una que el agente sepa usar (macOS, por ejemplo)."""
+    """The tool of the system, or None if this system has none the agent knows how to use (macOS, for example)."""
     if platform.startswith("win"):
         return NetshScanner()
     if platform.startswith("linux"):
@@ -353,8 +344,8 @@ def scanner_for(platform: str = sys.platform):
 
 
 def describe(ap: dict, fingerprint: Callable[[str], str], vendor: Callable[[str], Optional[str]]) -> dict:
-    """El punto de acceso como sale del computador: la MAC se cambia por su huella con sal y su último byte; el
-    fabricante solo si la MAC es la de fábrica (una MAC administrada localmente no dice quién la hizo)."""
+    """The access point as it leaves the computer: the MAC is replaced with its salted fingerprint and its last byte;
+    the maker only if the MAC is the factory one (a locally administered MAC does not say who made it)."""
     mac = ap["mac"]
     local = bool(int(mac[:2], 16) & 0b10)
     described = {key: value for key, value in ap.items() if key != "mac"}
@@ -365,8 +356,8 @@ def describe(ap: dict, fingerprint: Callable[[str], str], vendor: Callable[[str]
 
 def scan(scan_id: int, agent_version: str, fingerprint: Callable[[str], str],
          vendor: Callable[[str], Optional[str]], scanner=None, clock: Callable[[], float] = time.monotonic) -> dict:
-    """Escanea y arma lo que se envía al servidor para el escaneo ``scan_id``. Nunca lanza excepciones: cualquier
-    problema se devuelve como un escaneo fallido con su motivo."""
+    """Scans and builds what is sent to the server for the scan ``scan_id``. It never raises: any problem is returned as
+    a failed scan with its reason."""
     started = clock()
     scanner = scanner if scanner is not None else scanner_for()
     result: dict = {"scanId": scan_id, "agentVersion": agent_version}
@@ -375,7 +366,7 @@ def scan(scan_id: int, agent_version: str, fingerprint: Callable[[str], str],
     else:
         try:
             outcome = scanner.scan()
-        except Exception as error:  # un adaptador raro no debe tumbar el agente
+        except Exception as error:  # an odd adapter must not bring the agent down
             print(f"  aviso: el escaneo falló: {error}", file=sys.stderr)
             outcome = ScanOutcome(scanner.tool, failure="COMMAND_FAILED")
     seen: dict[str, dict] = {}
@@ -398,7 +389,7 @@ def scan(scan_id: int, agent_version: str, fingerprint: Callable[[str], str],
 
 
 def summary(result: dict) -> str:
-    """Una línea para la consola, sin ninguna MAC."""
+    """A line for the console, without any MAC."""
     if result.get("status") == "FAILED":
         return f"Escaneo de redes cercanas: no se pudo ({result.get('failureReason')})."
     access_points = result.get("accessPoints") or []

@@ -1,4 +1,4 @@
-"""Lectura de archivos pcap y pcapng (los que deja pktmon), incluidos los dañados."""
+"""Reading of pcap and pcapng files (the ones pktmon leaves), damaged ones included."""
 import io
 
 import pytest

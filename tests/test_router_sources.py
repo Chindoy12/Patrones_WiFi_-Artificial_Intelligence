@@ -1,4 +1,4 @@
-"""Nombres que el propio router conoce, preguntados a su DNS sin clave; y lo que todavía no existe (bloquear)."""
+"""Names the router itself knows, asked to its DNS without a password; and what does not exist yet (blocking)."""
 import socket
 import struct
 import threading
@@ -9,7 +9,7 @@ from agent import router_sources as routers
 
 
 def answer(query: bytes, name: str = None, rcode: int = 0, compress: bool = True) -> bytes:
-    """La respuesta que daría un router con dnsmasq."""
+    """The answer a router with dnsmasq would give."""
     query_id = struct.unpack("!H", query[:2])[0]
     question = query[12:]
     header = struct.pack("!HHHHHH", query_id, 0x8180 | rcode, 1, 1 if name else 0, 0, 0)
@@ -56,7 +56,7 @@ def test_a_pointer_loop_cannot_hang_the_agent():
 
 
 class FakeRouterDns:
-    """Un 'router' de verdad en 127.0.0.1 que responde PTR de su tabla de DHCP."""
+    """A real 'router' on 127.0.0.1 that answers PTR from its DHCP table."""
 
     def __init__(self, table):
         self.table = table

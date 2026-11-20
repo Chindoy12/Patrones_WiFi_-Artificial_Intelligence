@@ -1,14 +1,14 @@
-"""Cabeceras de un paquete capturado -> qué protocolo es, de dónde a dónde y por qué puerto.
+"""Headers of a captured packet -> which protocol it is, from where to where and through which port.
 
-Captura mínima: solo se miran las cabeceras de enlace, IP y TCP/UDP (los primeros bytes del paquete). Nunca se lee
-el contenido: ni nombres consultados por DNS, ni páginas, ni contraseñas, ni cookies. El protocolo de aplicación se
-deduce solo del número de puerto (53 es DNS, 443 es HTTPS...), sin abrir el paquete.
+Minimal capture: only the link, IP and TCP/UDP headers are read (the first bytes of the packet). The content is never
+read: not the names asked to DNS, nor pages, passwords or cookies. The application protocol is deduced only from the
+port number (53 is DNS, 443 is HTTPS...), without opening the packet.
 
-Las direcciones IP y MAC solo existen aquí, en memoria, para contar entrada y salida y cuántos equipos distintos hubo;
-capture_stats no las envía al servidor.
+The IP and MAC addresses only exist here, in memory, to count incoming and outgoing traffic and how many different
+devices there were; capture_stats does not send them to the server.
 
-Tipos de enlace (LINKTYPE de tcpdump.org): 1 Ethernet (lo que entregan Npcap y pktmon en una tarjeta Wi-Fi normal),
-101/228/229 IP sin enlace (sockets sin procesar), 113 y 276 Linux «cooked» (socket de paquetes en la interfaz "any").
+Link types (LINKTYPE of tcpdump.org): 1 Ethernet (what Npcap and pktmon deliver on a normal Wi-Fi card), 101/228/229
+IP without link (raw sockets), 113 and 276 Linux «cooked» (packet socket on the "any" interface).
 """
 from __future__ import annotations
 
@@ -20,35 +20,35 @@ from typing import Optional
 LINK_ETHERNET, LINK_RAW, LINK_IPV4, LINK_IPV6, LINK_LINUX_SLL, LINK_LINUX_SLL2 = 1, 101, 228, 229, 113, 276
 ETHERTYPE_IPV4, ETHERTYPE_ARP, ETHERTYPE_IPV6, ETHERTYPE_VLAN, ETHERTYPE_QINQ = 0x0800, 0x0806, 0x86DD, 0x8100, 0x88A8
 IPPROTO_ICMP, IPPROTO_IGMP, IPPROTO_TCP, IPPROTO_UDP, IPPROTO_ICMPV6 = 1, 2, 6, 17, 58
-IPV6_EXTENSIONS = (0, 43, 44, 60)  # salto a salto, enrutamiento, fragmento, opciones de destino
+IPV6_EXTENSIONS = (0, 43, 44, 60)  # hop by hop, routing, fragment, destination options
 
-# Puerto -> protocolo de aplicación (solo por el número, sin abrir el paquete).
+# Port -> application protocol (only by the number, without opening the packet).
 UDP_SERVICES = {53: "DNS", 5353: "MDNS", 67: "DHCP", 68: "DHCP", 546: "DHCP", 547: "DHCP", 1900: "SSDP",
                 137: "NETBIOS", 138: "NETBIOS", 5355: "LLMNR", 443: "QUIC", 123: "NTP"}
 TCP_SERVICES = {53: "DNS", 139: "NETBIOS", 80: "HTTP", 8080: "HTTP", 443: "HTTPS", 5355: "LLMNR"}
-EPHEMERAL_FROM = 49152  # los puertos desde aquí los elige el sistema al azar: no dicen qué servicio es
+EPHEMERAL_FROM = 49152  # ports from here on are chosen at random by the system: they do not tell which service it is
 
-# Lo que acepta el servidor (AgentCaptureResult.Protocol): cualquier otra cosa sería rechazada.
+# What the server accepts (AgentCaptureResult.Protocol): anything else would be rejected.
 PROTOCOLS = ("TCP", "UDP", "ICMP", "ICMPV6", "ARP", "IGMP", "DNS", "MDNS", "DHCP", "SSDP", "NETBIOS", "LLMNR",
              "HTTP", "HTTPS", "QUIC", "NTP", "IPV6_OTHER", "IPV4_OTHER", "OTHER")
 
 
 @dataclass(frozen=True)
 class PacketInfo:
-    """Lo que se sabe de un paquete por sus cabeceras."""
-    length: int                         # bytes originales del paquete (no solo los guardados)
-    protocol: str                       # uno de PROTOCOLS
-    transport: Optional[str] = None     # "TCP" o "UDP"
-    service_port: Optional[int] = None  # el puerto conocido de la conversación (443, 53...), no el efímero
-    source: Optional[str] = None        # IP de origen (solo en memoria)
-    destination: Optional[str] = None   # IP de destino (solo en memoria)
-    broadcast: bool = False             # para todos los equipos de la red (MAC ff:ff:ff:ff:ff:ff o IP de difusión)
-    multicast: bool = False             # para un grupo (mDNS, SSDP, IPv6...)
-    malformed: bool = False             # cabeceras cortadas o imposibles: se cuenta, no se interpreta
+    """What is known about a packet from its headers."""
+    length: int                         # original bytes of the packet (not only the stored ones)
+    protocol: str                       # one of PROTOCOLS
+    transport: Optional[str] = None     # "TCP" or "UDP"
+    service_port: Optional[int] = None  # the well-known port of the conversation (443, 53...), not the ephemeral one
+    source: Optional[str] = None        # source IP (in memory only)
+    destination: Optional[str] = None   # destination IP (in memory only)
+    broadcast: bool = False             # for every device of the network (MAC ff:ff:ff:ff:ff:ff or broadcast IP)
+    multicast: bool = False             # for a group (mDNS, SSDP, IPv6...)
+    malformed: bool = False             # headers cut short or impossible: counted, not interpreted
 
 
 def parse(data: bytes, link_type: int, original_length: Optional[int] = None) -> PacketInfo:
-    """Interpreta las cabeceras de un paquete. Nunca lanza excepciones: lo ilegible sale como malformed."""
+    """Interprets the headers of a packet. It never raises: whatever cannot be read comes out as malformed."""
     length = original_length if original_length is not None else len(data)
     try:
         return _parse(data, link_type, length)
@@ -65,7 +65,7 @@ def _parse(data: bytes, link_type: int, length: int) -> PacketInfo:
         broadcast = destination_mac == b"\xff" * 6
         multicast = not broadcast and bool(destination_mac[0] & 1)
         ethertype, offset = struct.unpack("!H", data[12:14])[0], 14
-        while ethertype in (ETHERTYPE_VLAN, ETHERTYPE_QINQ):  # etiquetas de VLAN: 4 bytes cada una
+        while ethertype in (ETHERTYPE_VLAN, ETHERTYPE_QINQ):  # VLAN tags: 4 bytes each
             ethertype, offset = struct.unpack("!H", data[offset + 2:offset + 4])[0], offset + 4
     elif link_type == LINK_LINUX_SLL:
         packet_type = struct.unpack("!H", data[0:2])[0]
@@ -111,7 +111,7 @@ def _ipv4(data: bytes, offset: int, length: int, broadcast: bool, multicast: boo
     if protocol == IPPROTO_IGMP:
         return PacketInfo(length, "IGMP", **common)
     if protocol in (IPPROTO_TCP, IPPROTO_UDP):
-        if fragment_offset:  # un fragmento que no es el primero no trae los puertos
+        if fragment_offset:  # a fragment that is not the first one carries no ports
             return PacketInfo(length, "TCP" if protocol == IPPROTO_TCP else "UDP",
                               transport="TCP" if protocol == IPPROTO_TCP else "UDP", **common)
         return _transport(data, offset + header, protocol, length, common)
@@ -127,12 +127,12 @@ def _ipv6(data: bytes, offset: int, length: int, broadcast: bool, multicast: boo
     common = dict(source=source, destination=str(destination_ip), broadcast=broadcast,
                   multicast=multicast or destination_ip.is_multicast)
     position = offset + 40
-    for _ in range(8):  # como mucho 8 extensiones; más sería un paquete fabricado
+    for _ in range(8):  # at most 8 extensions; more would be a crafted packet
         if next_header not in IPV6_EXTENSIONS:
             break
         if len(data) < position + 8:
             return PacketInfo(length, "IPV6_OTHER", malformed=True, **common)
-        if next_header == 44:  # fragmento: tamaño fijo; si no es el primero, no hay puertos
+        if next_header == 44:  # fragment: fixed size; if it is not the first one, there are no ports
             if struct.unpack("!H", data[position + 2:position + 4])[0] >> 3:
                 return PacketInfo(length, "IPV6_OTHER", **common)
             next_header, position = data[position], position + 8
@@ -147,7 +147,7 @@ def _ipv6(data: bytes, offset: int, length: int, broadcast: bool, multicast: boo
 
 def _transport(data: bytes, offset: int, protocol: int, length: int, common: dict) -> PacketInfo:
     transport = "TCP" if protocol == IPPROTO_TCP else "UDP"
-    if len(data) < offset + 4:  # la herramienta guardó menos bytes que los puertos
+    if len(data) < offset + 4:  # the tool stored fewer bytes than the ports need
         return PacketInfo(length, transport, transport=transport, malformed=True, **common)
     source_port, destination_port = struct.unpack("!HH", data[offset:offset + 4])
     services = TCP_SERVICES if transport == "TCP" else UDP_SERVICES
@@ -157,6 +157,6 @@ def _transport(data: bytes, offset: int, protocol: int, length: int, common: dic
 
 
 def service_port(source: int, destination: int) -> Optional[int]:
-    """El puerto que identifica el servicio: el conocido de los dos (el otro lo eligió el sistema al azar)."""
+    """The port that identifies the service: the well-known one of the two (the system chose the other one at random)."""
     known = [port for port in (destination, source) if 0 < port < EPHEMERAL_FROM]
     return min(known) if known else None

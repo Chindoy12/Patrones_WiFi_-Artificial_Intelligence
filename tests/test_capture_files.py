@@ -1,4 +1,4 @@
-"""Los archivos temporales de una captura: carpeta privada, borrado al terminar y limpieza de restos."""
+"""The temporary files of a capture: private folder, deleted at the end and cleanup of leftovers."""
 import os
 import stat
 

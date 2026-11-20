@@ -1,4 +1,4 @@
-"""Medición en vivo del agente (2.1.0): qué mide cada 2 segundos, cuándo empieza y cuándo se detiene."""
+"""Live measurement of the agent (2.1.0): what it measures every 2 seconds, when it starts and when it stops."""
 import io
 import json
 import re
@@ -39,7 +39,7 @@ class FakeTime:
 
 
 def fake_sampler(counters, clock, internet=42.0, gateway=3.0, link=None, open_port=53):
-    """Un sampler con contadores, reloj y respuestas de red falsos (``counters`` se consume en orden)."""
+    """A sampler with fake counters, clock and network answers (``counters`` is consumed in order)."""
     readings = iter(counters)
 
     def probe(host, port, timeout):
@@ -52,7 +52,7 @@ def fake_sampler(counters, clock, internet=42.0, gateway=3.0, link=None, open_po
                             clock=clock)
 
 
-# ----------------------------------------------------------------------------------------- lo que pide el servidor
+# ---------------------------------------------------------------------------------------- what the server asks for
 
 def test_the_server_can_only_ask_for_numbers_within_limits():
     assert live.live_task_of({"live": True, "sampleSeconds": 2, "maxSeconds": 600}) == {"sampleSeconds": 2,
@@ -60,7 +60,7 @@ def test_the_server_can_only_ask_for_numbers_within_limits():
     assert live.live_task_of({"live": True, "sampleSeconds": 0, "maxSeconds": 99_999}) == {"sampleSeconds": 1,
                                                                                             "maxSeconds": 1800}
     assert live.live_task_of({"live": True}) == {"sampleSeconds": 2, "maxSeconds": 600}
-    # cualquier otra cosa se ignora: el agente nunca ejecuta órdenes del servidor
+    # anything else is ignored: the agent never runs orders of the server
     assert live.live_task_of({"live": True, "sampleSeconds": "2; del *", "command": "shutdown"}) == {
         "sampleSeconds": 2, "maxSeconds": 600}
     assert live.live_task_of({"live": True, "sampleSeconds": True}) == {"sampleSeconds": 2, "maxSeconds": 600}
@@ -69,20 +69,20 @@ def test_the_server_can_only_ask_for_numbers_within_limits():
     assert live.live_task_of(None) is None
 
 
-# ------------------------------------------------------------------------------------------------- las muestras
+# -------------------------------------------------------------------------------------------------- the samples
 
 def test_the_traffic_of_this_moment_comes_from_the_counters():
     before = {"bytes.in": 1_000_000, "bytes.out": 200_000}
     after = {"bytes.in": 2_000_000, "bytes.out": 450_000}
-    assert live.throughput(before, after, 2.0) == (4_000_000, 1_000_000)  # 1 MB en 2 s = 4 Mbps
-    assert live.throughput(after, before, 2.0) == (None, None)  # contador que retrocede: no es confiable
+    assert live.throughput(before, after, 2.0) == (4_000_000, 1_000_000)  # 1 MB in 2 s = 4 Mbps
+    assert live.throughput(after, before, 2.0) == (None, None)  # a counter that goes back: not reliable
     assert live.throughput(before, after, 0) == (None, None)
     assert live.throughput({}, after, 2.0) == (None, None)
 
 
 def test_the_router_port_is_the_first_that_answers_and_none_means_unknown():
     assert live.pick_gateway_port("192.168.43.1", lambda h, p, t: 0.4 if p == 80 else None) == 80
-    assert live.pick_gateway_port("192.168.43.1", lambda h, p, t: 0.4) == 53  # DNS primero (zona Wi-Fi del celular)
+    assert live.pick_gateway_port("192.168.43.1", lambda h, p, t: 0.4) == 53  # DNS first (Wi-Fi hotspot of the phone)
     assert live.pick_gateway_port("192.168.43.1", lambda h, p, t: None) is None
     assert live.pick_gateway_port(None, lambda h, p, t: 0.4) is None
 
@@ -110,7 +110,7 @@ def test_silence_from_internet_is_a_lost_sample_and_a_router_without_ports_is_un
     sample = sampler.sample()
 
     assert sample["internetLost"] is True and "internetMs" not in sample
-    assert "gatewayMs" not in sample and "gatewayLost" not in sample  # no se cuenta como pérdida
+    assert "gatewayMs" not in sample and "gatewayLost" not in sample  # not counted as a loss
 
 
 def test_a_router_that_stops_answering_is_lost_and_a_broken_wifi_reading_does_not_stop_the_sample():
@@ -119,7 +119,7 @@ def test_a_router_that_stops_answering_is_lost_and_a_broken_wifi_reading_does_no
     def link():
         raise OSError("netsh no respondió")
 
-    answers = iter([0.5, None])  # al empezar contesta en el puerto 53; en la muestra ya no
+    answers = iter([0.5, None])  # at the start it answers on port 53; in the sample it no longer does
     sampler = live.LiveSampler(lambda: {"bytes.in": 0, "bytes.out": 0}, link,
                                lambda h, p, t: 30.0 if h == "1.1.1.1" else next(answers), "192.168.1.1",
                                ("1.1.1.1", 443), clock=fake.clock)
@@ -143,10 +143,10 @@ def test_a_sample_never_carries_an_address():
 
     assert not re.search(r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b", text)
     assert not re.search(r"([0-9a-f]{2}[:-]){5}[0-9a-f]{2}", text)
-    assert "Casa" not in text  # el nombre de la red ya lo conoce el servidor por la clave
+    assert "Casa" not in text  # the server already knows the name of the network by the key
 
 
-# ------------------------------------------------------------------------------------------------- la sesión
+# ----------------------------------------------------------------------------------------------- the session
 
 def endless_counters():
     value = 0
@@ -161,7 +161,7 @@ def test_the_session_samples_every_2_seconds_until_nobody_is_watching():
 
     def send(sample):
         sent.append(fake.now)
-        return len(sent) < 4  # el cuarto envío responde que ya nadie mira la página
+        return len(sent) < 4  # the fourth send answers that nobody is watching the page anymore
 
     assert live.run_session({"sampleSeconds": 2, "maxSeconds": 600}, sampler, send, sleep=fake.sleep,
                             clock=fake.clock) == 4
@@ -223,7 +223,7 @@ def test_describe_sample_is_readable():
     assert text == "bajada 12.50 Mbps · subida 1.00 Mbps · router 4 ms · internet sin respuesta · señal 64 %"
 
 
-# ------------------------------------------------------------------------------------------------- con el servidor
+# ------------------------------------------------------------------------------------------------- with the server
 
 def test_while_waiting_the_agent_starts_live_when_someone_opens_the_page_and_does_not_ask_again_meanwhile(
         monkeypatch):
@@ -247,8 +247,8 @@ def test_while_waiting_the_agent_starts_live_when_someone_opens_the_page_and_doe
                               clock=lambda: clock[0], opener=opener)
 
     assert started == [{"sampleSeconds": 2, "maxSeconds": 600}]
-    assert asked.count("live/next") == 1  # mientras mide no vuelve a preguntar
-    assert asked.count("scans/next") == 3  # y lo demás sigue igual
+    assert asked.count("live/next") == 1  # while it measures it does not ask again
+    assert asked.count("scans/next") == 3  # and everything else stays the same
 
 
 def test_a_server_without_live_is_not_asked_again_until_the_next_report(monkeypatch):
@@ -302,7 +302,7 @@ def test_start_live_measures_in_another_thread_and_ends_when_nobody_watches():
         posted.append(json.loads(request.data))
         return Response(b'{"keepGoing": false}')
 
-    # el hilo usa el reloj real: con 1 segundo de muestra termina enseguida porque el servidor dice que pare
+    # the thread uses the real clock: with a 1-second sample it ends right away because the server says to stop
     thread = agent.start_live({"sampleSeconds": 1, "maxSeconds": 10}, SERVER, KEY, opener=opener, sampler=sampler)
     thread.join(timeout=5)
 

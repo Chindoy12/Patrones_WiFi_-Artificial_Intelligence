@@ -40,7 +40,7 @@ app/training.py       entrenamiento con mediciones reales y decisión de reempla
 app/llm_advisor.py    recomendaciones opcionales con Claude
 docs/                 patrones.md, evaluacion_modelos.md, entrenamiento_real.md, pruebas_de_carga.md, modelo_calidad.md,
                       auditoria_seguridad.md y canal_wifi.md
-load-tests/           carga_ia.py: prueba de carga del servicio (solo Python estándar)
+load-tests/           ai_load_test.py: prueba de carga del servicio (solo Python estándar)
 tests/                preprocesamiento, modelo, diagnóstico, escenarios, evaluación, seguridad, canal, agente, escaneo de
                       redes cercanas (test_wifi_scan.py, también en Windows real), medición en vivo
                       (test_live_monitor.py) y API
@@ -262,7 +262,7 @@ cp .env.example .env                       # AI_API_KEY igual a la del backend
 export $(grep -v '^#' .env | xargs)
 uvicorn app.main:app --port 8000
 pytest                                     # 496 pruebas (3 solo corren en Windows y 4 solo en Linux; la captura real necesita root)
-python load-tests/carga_ia.py --clientes 10  # prueba de carga (AI_API_KEY en el entorno)
+python load-tests/ai_load_test.py --clients 10  # prueba de carga (AI_API_KEY en el entorno)
 python -m app.evaluation                   # imprime la evaluación en Markdown
 docker build -t wifisense-ai . && docker run -p 8000:8000 -e AI_API_KEY=... wifisense-ai
 ```

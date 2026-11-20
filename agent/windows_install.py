@@ -1,12 +1,12 @@
-"""Instalación del agente en Windows, para el usuario actual y sin permisos de administrador.
+"""Installation of the agent on Windows, for the current user and without administrator permissions.
 
-Lo que hace es lo mismo que cualquier programa instalado por el usuario, y todo se puede ver y deshacer:
+What it does is the same as any program installed by the user, and everything can be seen and undone:
 
-* copia el programa a %LOCALAPPDATA%\\Programs\\WiFiSense;
-* si la persona lo marca, lo agrega al inicio de Windows (aparece en Administrador de tareas > Aplicaciones de
-  inicio, donde se puede desactivar);
-* lo registra en Configuración > Aplicaciones > Aplicaciones instaladas como «Agente WiFiSense», con su opción
-  Desinstalar, que borra todo lo anterior y la configuración (la clave del agente).
+* it copies the program to %LOCALAPPDATA%\\Programs\\WiFiSense;
+* if the person ticks it, it adds it to Windows startup (it shows in Task Manager > Startup apps, where it can be
+  turned off);
+* it registers it in Settings > Apps > Installed apps as «Agente WiFiSense», with its Uninstall option, which deletes
+  all of the above and the configuration (the key of the agent).
 """
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ UNINSTALL_KEY = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\WiFiSenseA
 
 
 class Registry(Protocol):
-    """Lo mínimo del registro de Windows (HKEY_CURRENT_USER) que usa el instalador."""
+    """The minimum of the Windows registry (HKEY_CURRENT_USER) that the installer uses."""
 
     def set_values(self, key: str, values: dict) -> None: ...
 
@@ -40,10 +40,10 @@ class Registry(Protocol):
 
 
 class WindowsRegistry:
-    """HKEY_CURRENT_USER real. Solo existe en Windows; nunca toca HKEY_LOCAL_MACHINE."""
+    """The real HKEY_CURRENT_USER. It only exists on Windows; it never touches HKEY_LOCAL_MACHINE."""
 
     def __init__(self):
-        import winreg  # noqa: PLC0415 - solo existe en Windows
+        import winreg  # noqa: PLC0415 - only exists on Windows
         self.winreg = winreg
 
     def set_values(self, key: str, values: dict) -> None:
@@ -116,7 +116,7 @@ def starts_with_windows(registry: Registry) -> bool:
 
 
 def install(source_exe: Path, paths: Paths, registry: Registry, version: str, autostart: bool) -> Path:
-    """Copia el programa y lo registra como aplicación instalada (y en el inicio, si se pidió)."""
+    """Copies the program and registers it as an installed app (and in startup, if asked)."""
     paths.install_dir.mkdir(parents=True, exist_ok=True)
     paths.data_dir.mkdir(parents=True, exist_ok=True)
     if source_exe.resolve() != paths.exe.resolve():
@@ -145,13 +145,13 @@ def set_autostart(paths: Paths, registry: Registry, enabled: bool) -> None:
 
 
 def uninstall(paths: Paths, registry: Registry, stop=None, schedule_removal=None) -> None:
-    """Detiene el agente, quita el inicio automático y el registro, y borra la configuración (incluida la clave)."""
+    """Stops the agent, removes the automatic start and the registration, and deletes the configuration (key included)."""
     (stop or stop_running_agent)(paths)
     registry.delete_value(RUN_KEY, APP_ID)
     registry.delete_key(UNINSTALL_KEY)
     shutil.rmtree(paths.config_dir, ignore_errors=True)
     shutil.rmtree(paths.data_dir, ignore_errors=True)
-    # El .exe que está corriendo no se puede borrar a sí mismo: se borra la carpeta un par de segundos después.
+    # The running .exe cannot delete itself: the folder is deleted a couple of seconds later.
     (schedule_removal or schedule_folder_removal)(paths.install_dir)
 
 
@@ -160,7 +160,7 @@ DETACHED = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(subprocess, "CRE
 
 
 def start_agent(paths: Paths) -> None:
-    """Arranca el agente en segundo plano (el mismo comando que usa el inicio de Windows)."""
+    """Starts the agent in the background (the same command Windows startup uses)."""
     subprocess.Popen([str(paths.exe), "run"], creationflags=NO_WINDOW | DETACHED, close_fds=True,
                      stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
@@ -214,7 +214,7 @@ SYNCHRONIZE = 0x00100000
 
 
 def _kernel32():
-    import ctypes  # noqa: PLC0415 - solo en Windows
+    import ctypes  # noqa: PLC0415 - Windows only
     from ctypes import wintypes  # noqa: PLC0415
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
     kernel32.K32EnumProcesses.argtypes = [ctypes.POINTER(wintypes.DWORD), wintypes.DWORD,

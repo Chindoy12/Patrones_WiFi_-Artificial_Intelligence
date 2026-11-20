@@ -1,7 +1,7 @@
 """Install (or reinstall) the agent with a code: what the Install button of the window does, without the window."""
 from __future__ import annotations
 
-try:  # como paquete (pruebas) o como script suelto (PyInstaller)
+try:  # as a package (tests) or as loose scripts (PyInstaller)
     from agent import windows_install as setup
     from agent import wifisense_agent as agent
 except ImportError:  # pragma: no cover
@@ -43,15 +43,16 @@ def install_and_pair(code: str, autostart: bool, paths, registry, pair=None, sto
 
 
 def needs_update(paths, registry) -> bool:
-    """Este programa es una versión distinta de la instalada y no es el instalado (abrir el instalado no actualiza)."""
+    """This program is a different version from the installed one and is not the installed one (opening the installed
+    one does not update it)."""
     installed = setup.installed_version(registry)
     return bool(installed) and installed != agent.AGENT_VERSION and \
         setup.current_executable().resolve() != paths.exe.resolve()
 
 
 def update_program(paths, registry, stop=None, copy_in=None, start=None) -> str | None:
-    """Reemplaza el programa instalado por esta versión sin pedir código: las redes y sus claves se conservan (están
-    en la configuración, que no se toca). Devuelve el mensaje de error, o None si quedó actualizado."""
+    """Replaces the installed program with this version without asking for a code: the networks and their keys are kept
+    (they are in the configuration, which is not touched). Returns the error message, or None if it was updated."""
     stop = stop or setup.stop_running_agent
     copy_in = copy_in or (lambda: setup.install(setup.current_executable(), paths, registry, agent.AGENT_VERSION,
                                                 setup.starts_with_windows(registry)))

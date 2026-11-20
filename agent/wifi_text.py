@@ -1,8 +1,8 @@
-"""Cómo leer lo que el sistema dice del Wi-Fi: claves de netsh en español o en inglés, números, tipo de seguridad,
-cifrado, banda y las columnas de nmcli. Lo usan la medición del agente (wifisense_agent.py) y el escaneo de redes
-cercanas (wifi_scan.py), para que las dos lean el sistema de la misma manera.
+"""How to read what the system says about the Wi-Fi: netsh keys in Spanish or in English, numbers, security type,
+cipher, band and the columns of nmcli. The measurement of the agent (wifisense_agent.py) and the scan of nearby
+networks (wifi_scan.py) use it, so both read the system the same way.
 
-Solo usa la biblioteca estándar.
+Standard library only.
 """
 from __future__ import annotations
 
@@ -11,8 +11,19 @@ import unicodedata
 from typing import Optional
 
 
+def console_text(raw: bytes) -> str:
+    """What a command wrote, as text: netsh writes in the code page of the console (cp850 in Spanish), so UTF-8 is
+    tried first and latin-1, which decodes anything, last."""
+    for encoding in ("utf-8", "oem", "cp850", "latin-1"):
+        try:
+            return raw.decode(encoding)
+        except (UnicodeDecodeError, LookupError):
+            continue
+    return raw.decode("latin-1", errors="replace")  # pragma: no cover (latin-1 always decodes)
+
+
 def normalize_key(key: str) -> str:
-    """Clave de netsh en minúsculas, sin tildes ni espacios ('Autenticación' -> 'autenticacion')."""
+    """netsh key in lowercase, without accents or spaces ('Autenticación' -> 'autenticacion')."""
     ascii_key = unicodedata.normalize("NFKD", key.lower())
     return "".join(c for c in ascii_key if "a" <= c <= "z")
 
@@ -31,7 +42,7 @@ def first_number(text: str) -> Optional[float]:
 
 
 def authentication_of(auth: str, cipher: str = "") -> str:
-    """Texto del sistema -> OPEN, WEP, WPA, WPA2, WPA3 o UNKNOWN (lo que entiende la auditoría de la IA)."""
+    """Text of the system -> OPEN, WEP, WPA, WPA2, WPA3 or UNKNOWN (what the security audit of the AI understands)."""
     auth_u, cipher_u = (auth or "").upper(), (cipher or "").upper()
     if "WPA3" in auth_u or "SAE" in auth_u or "OWE" in auth_u:
         return "WPA3"
@@ -50,8 +61,8 @@ CIPHERS = (("GCMP-256", "GCMP-256"), ("GCMP", "GCMP"), ("CCMP", "CCMP"), ("AES",
 
 
 def cipher_of(text: str) -> Optional[str]:
-    """Nombre corto del cifrado. Algunas versiones de Windows escriben una descripción larga (por ejemplo varios
-    cifrados o el nombre del proveedor); el servidor solo acepta hasta 20 caracteres."""
+    """Short name of the cipher. Some versions of Windows write a long description (for example several ciphers or the
+    name of the provider); the server only accepts up to 20 characters."""
     upper = (text or "").upper()
     for token, name in CIPHERS:
         if token in upper:
@@ -68,5 +79,5 @@ def band_of(band_text: str, channel: Optional[int]) -> Optional[str]:
     return None
 
 def split_nmcli(line: str) -> list[str]:
-    """nmcli -t separa con ':' y escapa los ':' de los valores con '\\:'."""
+    """nmcli -t separates with ':' and escapes the ':' of the values with '\\:'."""
     return [part.replace("\\:", ":") for part in re.split(r"(?<!\\):", line)]

@@ -1,12 +1,12 @@
 # Pruebas de carga del servicio de IA
 
-`load-tests/carga_ia.py` envía a la vez lo mismo que envía el backend: detección de anomalías con una ventana de 20
+`load-tests/ai_load_test.py` envía a la vez lo mismo que envía el backend: detección de anomalías con una ventana de 20
 mediciones (el 20 % con la última degradada), calidad de la conexión, auditoría de seguridad y mejor canal. Solo usa la
 librería estándar de Python. Objetivo: **p95 menor que 500 ms y menos de 1 % de errores** (código de salida 0 o 1).
 
 ```cmd
 set AI_API_KEY=<la misma clave del backend>
-python load-tests\carga_ia.py --url http://localhost:8000 --clientes 10 --segundos 60 --salida resultado.json
+python load-tests\ai_load_test.py --url http://localhost:8000 --clients 10 --seconds 60 --output resultado.json
 ```
 
 En Railway el servicio de IA solo lo llama el backend por la red privada; esta prueba es para correrla en local.

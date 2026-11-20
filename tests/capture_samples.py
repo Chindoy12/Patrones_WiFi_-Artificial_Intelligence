@@ -1,7 +1,7 @@
-"""Paquetes y archivos de captura sintéticos para las pruebas: se arman byte a byte, sin red real ni controladores.
+"""Synthetic packets and capture files for the tests: built byte by byte, without a real network or drivers.
 
-Los contenidos llevan a propósito textos como "password=secreto" o "cookie": las pruebas comprueban que nada de eso
-llega a las estadísticas.
+The contents carry texts such as "password=secreto" or "cookie" on purpose: the tests check that none of that reaches
+the statistics.
 """
 from __future__ import annotations
 

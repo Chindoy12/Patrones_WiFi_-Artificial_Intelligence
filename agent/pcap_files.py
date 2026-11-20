@@ -1,16 +1,16 @@
-"""Lectura de archivos de captura pcap y pcapng (los que escribe pktmon de Windows al convertir su .etl).
+"""Reading of pcap and pcapng capture files (the ones Windows pktmon writes when it converts its .etl).
 
-Solo se leen las cabeceras de los bloques y los primeros bytes de cada paquete (el agente pide a la herramienta que
-guarde como mucho 128 bytes por paquete). Un archivo dañado o truncado no rompe el agente: se detiene la lectura y
-se cuenta el resto como dañado. Nada de esto sale del computador: packet_parser y capture_stats lo convierten en
-conteos y el archivo se borra (capture_files).
+Only the headers of the blocks and the first bytes of each packet are read (the agent asks the tool to keep at most
+128 bytes per packet). A damaged or truncated file does not break the agent: the reading stops and the rest is counted
+as damaged. None of this leaves the computer: packet_parser and capture_stats turn it into counts and the file is
+deleted (capture_files).
 
-Formatos (https://www.ietf.org/archive/id/draft-ietf-opsawg-pcap-03.html y draft-ietf-opsawg-pcapng):
-  * pcap: cabecera de 24 bytes (número mágico, versión, tamaño máximo, tipo de enlace) y cada paquete con 16 bytes
-    de cabecera (segundos, micro o nanosegundos, bytes guardados, bytes originales).
-  * pcapng: bloques (tipo, largo, cuerpo, largo). SHB abre una sección (y dice el orden de los bytes), IDB describe
-    una interfaz (tipo de enlace y resolución del tiempo), EPB y SPB traen paquetes, ISB trae estadísticas de la
-    interfaz (paquetes que la herramienta perdió).
+Formats (https://www.ietf.org/archive/id/draft-ietf-opsawg-pcap-03.html and draft-ietf-opsawg-pcapng):
+  * pcap: a 24-byte header (magic number, version, maximum size, link type) and each packet with a 16-byte header
+    (seconds, micro or nanoseconds, stored bytes, original bytes).
+  * pcapng: blocks (type, length, body, length). SHB opens a section (and tells the byte order), IDB describes an
+    interface (link type and time resolution), EPB and SPB carry packets, ISB carries statistics of the interface
+    (packets the tool dropped).
 """
 from __future__ import annotations
 
@@ -24,16 +24,16 @@ PCAPNG_SHB = 0x0A0D0D0A
 PCAPNG_BYTE_ORDER = 0x1A2B3C4D
 BLOCK_IDB, BLOCK_SPB, BLOCK_ISB, BLOCK_EPB, BLOCK_OPB = 1, 3, 5, 6, 2
 OPTION_END, OPTION_IF_TSRESOL, OPTION_ISB_IFDROP = 0, 9, 5
-MAX_BLOCK = 1 << 20  # un bloque de más de 1 MB no es de una captura de cabeceras: el archivo está dañado
+MAX_BLOCK = 1 << 20  # a block of more than 1 MB is not from a capture of headers: the file is damaged
 
 
 class CaptureFileError(Exception):
-    """El archivo no es pcap ni pcapng."""
+    """The file is neither pcap nor pcapng."""
 
 
 @dataclass(frozen=True)
 class Frame:
-    """Un paquete leído del archivo: momento (segundos), tipo de enlace, bytes guardados y largo original."""
+    """A packet read from the file: moment (seconds), link type, stored bytes and original length."""
     timestamp: float
     link_type: int
     data: bytes
@@ -42,13 +42,13 @@ class Frame:
 
 @dataclass
 class FileSummary:
-    """Lo que el archivo dice de sí mismo además de los paquetes."""
-    dropped_by_tool: Optional[int] = None  # suma de isb_ifdrop de pcapng; None si la herramienta no lo dijo
-    damaged: bool = False                  # la lectura se detuvo en un bloque dañado o truncado
+    """What the file says about itself besides the packets."""
+    dropped_by_tool: Optional[int] = None  # sum of isb_ifdrop of pcapng; None if the tool did not say
+    damaged: bool = False                  # the reading stopped at a damaged or truncated block
 
 
 def read_frames(stream: BinaryIO, summary: Optional[FileSummary] = None) -> Iterator[Frame]:
-    """Los paquetes de un archivo pcap o pcapng, en orden."""
+    """The packets of a pcap or pcapng file, in order."""
     summary = summary if summary is not None else FileSummary()
     head = stream.read(4)
     if len(head) < 4:
@@ -91,18 +91,18 @@ def _pcap(stream: BinaryIO, order: str, nanoseconds: bool, summary: FileSummary)
 
 def _pcapng(stream: BinaryIO, head: bytes, summary: FileSummary) -> Iterator[Frame]:
     order = "<"
-    interfaces: list[tuple[int, float]] = []  # (tipo de enlace, segundos por unidad de tiempo)
+    interfaces: list[tuple[int, float]] = []  # (link type, seconds per time unit)
     block_type_raw = head
     while True:
         if not block_type_raw:
-            return  # fin limpio del archivo
+            return  # clean end of the file
         length_raw = stream.read(4)
         if len(block_type_raw) < 4 or len(length_raw) < 4:
             summary.damaged = True
             return
         block_type = struct.unpack(order + "I", block_type_raw)[0]
         if block_type == PCAPNG_SHB:
-            # el orden de los bytes de la sección está en el cuerpo, antes que el largo pueda leerse bien
+            # the byte order of the section is in the body, before the length can be read correctly
             body_start = stream.read(4)
             if len(body_start) < 4:
                 summary.damaged = True
@@ -113,7 +113,7 @@ def _pcapng(stream: BinaryIO, head: bytes, summary: FileSummary) -> Iterator[Fra
                 summary.damaged = True
                 return
             body = body_start + stream.read(length - 12 - 4)
-            interfaces = []  # cada sección numera sus interfaces desde cero
+            interfaces = []  # each section numbers its interfaces from zero
         else:
             length = struct.unpack(order + "I", length_raw)[0]
             if length < 12 or length > MAX_BLOCK or length % 4:
@@ -130,7 +130,7 @@ def _pcapng(stream: BinaryIO, head: bytes, summary: FileSummary) -> Iterator[Fra
         elif block_type in (BLOCK_EPB, BLOCK_OPB) and len(body) >= 20:
             if block_type == BLOCK_EPB:
                 interface, high, low, saved, original = struct.unpack(order + "IIIII", body[:20])
-            else:  # bloque obsoleto: el número de interfaz ocupa 2 bytes y hay 2 de banderas
+            else:  # obsolete block: the interface number takes 2 bytes and there are 2 of flags
                 interface, _drops, high, low, saved, original = struct.unpack(order + "HHIIII", body[:20])
             if interface < len(interfaces) and saved <= len(body) - 20:
                 link_type, unit = interfaces[interface]
@@ -149,7 +149,7 @@ def _pcapng(stream: BinaryIO, head: bytes, summary: FileSummary) -> Iterator[Fra
 
 
 def _options(raw: bytes, order: str) -> dict[int, bytes]:
-    """Opciones de un bloque pcapng: (código, largo, valor con relleno a 4 bytes)."""
+    """Options of a pcapng block: (code, length, value padded to 4 bytes)."""
     found, offset = {}, 0
     while offset + 4 <= len(raw):
         code, length = struct.unpack(order + "HH", raw[offset:offset + 4])
@@ -161,7 +161,7 @@ def _options(raw: bytes, order: str) -> dict[int, bytes]:
 
 
 def _resolution(raw: Optional[bytes]) -> float:
-    """if_tsresol: potencia de 10 (bit alto en 0) o de 2 (bit alto en 1) de la unidad; por defecto microsegundos."""
+    """if_tsresol: power of 10 (high bit 0) or of 2 (high bit 1) of the unit; microseconds by default."""
     if not raw:
         return 1e-6
     value = raw[0]

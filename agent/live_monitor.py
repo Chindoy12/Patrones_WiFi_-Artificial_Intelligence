@@ -1,17 +1,17 @@
-"""Medición en vivo (2.1.0): mientras alguien tiene abierto «En vivo» en la página, el agente mide cada 2 segundos.
+"""Live measurement (2.1.0): while someone has «En vivo» open on the page, the agent measures every 2 seconds.
 
-Qué mide, sin gastar datos de más:
+What it measures, without spending extra data:
 
-- **Bajada y subida de este momento**: lo que avanzaron los contadores de la tarjeta de red (los mismos del reporte),
-  dividido por el tiempo. Es lo que el computador **está usando**, no lo que la conexión **aguanta** (eso lo mide
+- **Download and upload right now**: how much the counters of the network card advanced (the same ones as the report),
+  divided by the time. It is what the computer **is using**, not what the connection **can take** (that is measured by
   «Probar mi conexión»).
-- **Latencia al router y a internet**: el tiempo de una conexión TCP (como en el reporte). Si el router no contesta
-  en ningún puerto, su latencia queda desconocida; si internet no contesta, esa muestra cuenta como perdida.
-- **Señal y velocidad del enlace Wi-Fi** de la tarjeta.
+- **Latency to the router and to the internet**: the time of a TCP connection (as in the report). If the router does
+  not answer on any port, its latency stays unknown; if the internet does not answer, that sample counts as lost.
+- **Signal and link speed of the Wi-Fi** of the card.
 
-Nada de esto incluye direcciones MAC, sitios visitados ni el contenido del tráfico: solo números del propio
-computador. El servidor solo puede decir «mide» (cada cuántos segundos y por cuánto tiempo, como números) o «para»:
-el agente nunca ejecuta órdenes que lleguen del servidor.
+None of this includes MAC addresses, visited sites or the content of the traffic: only numbers of the computer itself.
+The server can only say «measure» (every how many seconds and for how long, as numbers) or «stop»: the agent never
+runs orders that come from the server.
 """
 from __future__ import annotations
 
@@ -25,17 +25,17 @@ MAX_SAMPLE_SECONDS = 10
 DEFAULT_SESSION_SECONDS = 600
 MIN_SESSION_SECONDS = 10
 MAX_SESSION_SECONDS = 1800
-GATEWAY_PORTS = (53, 80, 443)  # DNS primero: también lo atiende la zona Wi-Fi de un celular
+GATEWAY_PORTS = (53, 80, 443)  # DNS first: the Wi-Fi hotspot of a phone answers it too
 PROBE_TIMEOUT = 1.0
 MAX_FAILURES = 3
-MAX_BPS = 10 ** 11  # 100 Gbps: más que eso es un contador que no cuadra
+MAX_BPS = 10 ** 11  # 100 Gbps: more than that is a counter that does not add up
 
 Probe = Callable[[str, int, float], Optional[float]]
 
 
 def live_task_of(answer) -> Optional[dict]:
-    """Lo único que el servidor puede pedir: medir cada ``sampleSeconds`` durante ``maxSeconds`` (números dentro de
-    sus límites). Cualquier otra cosa se ignora."""
+    """The only thing the server can ask for: measure every ``sampleSeconds`` for ``maxSeconds`` (numbers within its
+    limits). Anything else is ignored."""
     if not isinstance(answer, dict) or answer.get("live") is not True:
         return None
 
@@ -50,8 +50,8 @@ def live_task_of(answer) -> Optional[dict]:
 
 
 def throughput(before: dict, after: dict, seconds: float) -> tuple[Optional[int], Optional[int]]:
-    """Bits por segundo de bajada y de subida entre dos lecturas de los contadores. Un contador que retrocede (otra
-    tarjeta, el computador se reinició) o un tiempo que no avanzó no dan un valor confiable: None."""
+    """Download and upload bits per second between two readings of the counters. A counter that goes back (another card,
+    the computer restarted) or a time that did not advance do not give a reliable value: None."""
     if seconds <= 0:
         return None, None
     rates = []
@@ -65,8 +65,8 @@ def throughput(before: dict, after: dict, seconds: float) -> tuple[Optional[int]
 
 
 def pick_gateway_port(gateway: Optional[str], probe: Probe) -> Optional[int]:
-    """El primer puerto del router que contesta (un rechazo también contesta). Si ninguno contesta, la latencia al
-    router no se puede medir así y queda desconocida: no se cuenta como pérdida."""
+    """The first port of the router that answers (a refusal also answers). If none answers, the latency to the router
+    cannot be measured this way and stays unknown: it is not counted as a loss."""
     if not gateway:
         return None
     for port in GATEWAY_PORTS:
@@ -76,7 +76,7 @@ def pick_gateway_port(gateway: Optional[str], probe: Probe) -> Optional[int]:
 
 
 class LiveSampler:
-    """Toma una muestra: tráfico desde la muestra anterior, latencias (en paralelo) y el enlace Wi-Fi."""
+    """Takes a sample: traffic since the previous sample, latencies (in parallel) and the Wi-Fi link."""
 
     def __init__(self, counters: Callable[[], dict], link: Callable[[], dict], probe: Probe,
                  gateway: Optional[str], internet: tuple[str, int], clock: Callable[[], float] = time.monotonic):
@@ -130,7 +130,7 @@ class LiveSampler:
                 sample["gatewayMs"] = round(gateway, 1)
         try:
             link = self.link() or {}
-        except Exception:  # sin datos del Wi-Fi la muestra sigue sirviendo
+        except Exception:  # without Wi-Fi data the sample is still useful
             link = {}
         for name in ("signalPercent", "rxRateMbps", "txRateMbps"):
             value = link.get(name)
@@ -140,14 +140,14 @@ class LiveSampler:
 
 
 class LiveStopped(Exception):
-    """El servidor ya no reconoce esta clave para medir en vivo (401 o 404): no se sigue intentando."""
+    """The server no longer recognises this key for live measurement (401 or 404): it stops trying."""
 
 
 def run_session(task: dict, sampler: LiveSampler, send: Callable[[dict], bool],
                 sleep: Callable[[float], None] = time.sleep, clock: Callable[[], float] = time.monotonic,
                 stop: Optional[threading.Event] = None) -> int:
-    """Mide y envía cada ``sampleSeconds`` hasta que el servidor diga que nadie está mirando, se cumpla
-    ``maxSeconds``, fallen 3 envíos seguidos o se pida parar. Devuelve cuántas muestras llegaron."""
+    """Measures and sends every ``sampleSeconds`` until the server says nobody is watching, ``maxSeconds`` is reached,
+    3 sends in a row fail or a stop is asked. Returns how many samples arrived."""
     period = task["sampleSeconds"]
     sampler.start()
     deadline = clock() + task["maxSeconds"]
@@ -163,7 +163,7 @@ def run_session(task: dict, sampler: LiveSampler, send: Callable[[dict], bool],
             keep_going = send(sample)
         except LiveStopped:
             return sent
-        except Exception:  # SendError: sin red o el servidor no respondió
+        except Exception:  # SendError: no network or the server did not answer
             failures += 1
             if failures >= MAX_FAILURES:
                 return sent
@@ -176,7 +176,7 @@ def run_session(task: dict, sampler: LiveSampler, send: Callable[[dict], bool],
 
 
 def describe_sample(sample: dict) -> str:
-    """Una línea legible, para «WiFiSenseAgente.exe live» y para el registro del agente."""
+    """A readable line, for «WiFiSenseAgente.exe live» and for the log of the agent."""
     def mbps(value) -> str:
         return f"{value / 1_000_000:.2f} Mbps" if isinstance(value, int) else "—"
 

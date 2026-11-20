@@ -90,7 +90,9 @@ escaneo debe terminar con un motivo conocido y sin ninguna MAC en el archivo.
 
 El código está en `agent/wifi_scan.py` (con `NetshScanner` y `NmcliScanner`, dos estrategias intercambiables que
 devuelven el mismo resultado) y la forma de leer los textos de `netsh`/`nmcli`, que comparten la medición y el
-escaneo, en `agent/wifi_text.py`.
+escaneo, en `agent/wifi_text.py` (también `console_text`, cómo se lee lo que escribe la consola). Leer y escribir
+nombres en el formato de DNS, que usan el descubrimiento por mDNS y el DNS del router, está una sola vez en
+`agent/dns_wire.py` (Avance 34: antes había tres copias).
 
 **Capturas técnicas autorizadas (2.0.0, solo el sensor de una red del equipo).** Un administrador de WiFiSense puede
 pedir, para una red del equipo, una captura con un propósito escrito y límites (segundos, paquetes y bytes). El sensor

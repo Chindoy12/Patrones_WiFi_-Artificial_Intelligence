@@ -1,10 +1,10 @@
-"""Punto de entrada del programa para Windows (WiFiSenseAgente.exe, empaquetado con PyInstaller).
+"""Entry point of the Windows program (WiFiSenseAgente.exe, packaged with PyInstaller).
 
-* Sin argumentos (doble clic): abre la ventana de instalación.
-* ``run``: el agente en segundo plano (lo usa el inicio de Windows). Como no tiene ventana, escribe lo que hace en
-  %LOCALAPPDATA%\\WiFiSense\\agente.log, y nunca corre dos veces a la vez.
-* ``uninstall``: lo que ejecuta Windows al elegir Desinstalar.
-* Cualquier otro comando del agente (``scan``, ``pair``…) funciona igual que con Python.
+* No arguments (double click): opens the installation window.
+* ``run``: the agent in the background (what Windows startup uses). As it has no window, it writes what it does to
+  %LOCALAPPDATA%\\WiFiSense\\agente.log, and it never runs twice at the same time.
+* ``uninstall``: what Windows runs when Uninstall is chosen.
+* Any other command of the agent (``scan``, ``pair``...) works the same as with Python.
 """
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from pathlib import Path
 try:
     from agent import wifisense_agent as agent
     from agent import windows_install as setup
-except ImportError:  # pragma: no cover - dentro del .exe los módulos están sueltos
+except ImportError:  # pragma: no cover - inside the .exe the modules are loose
     import wifisense_agent as agent
     import windows_install as setup
 
@@ -25,7 +25,7 @@ ERROR_ALREADY_EXISTS = 183
 
 
 def open_log(path: Path):
-    """Archivo de registro pequeño: cuando pasa de 1 MB se guarda como .1 y empieza de nuevo."""
+    """A small log file: when it grows past 1 MB it is kept as .1 and starts again."""
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists() and path.stat().st_size > MAX_LOG_BYTES:
         path.replace(path.with_suffix(".log.1"))
@@ -33,7 +33,7 @@ def open_log(path: Path):
 
 
 def already_running() -> bool:
-    """Un mutex con nombre de Windows: si otro agente ya lo creó, este se cierra."""
+    """A named Windows mutex: if another agent already created it, this one exits."""
     if os.name != "nt":
         return False
     import ctypes  # noqa: PLC0415
@@ -55,7 +55,7 @@ def background(args: list[str], paths: setup.Paths) -> int:
 
 
 def gui():
-    """La ventana se carga solo cuando hace falta (tkinter no se necesita para medir)."""
+    """The window is loaded only when needed (measuring does not need tkinter)."""
     try:
         from agent import installer_gui  # noqa: PLC0415
     except ImportError:  # pragma: no cover
@@ -72,7 +72,7 @@ def main(argv: list[str] | None = None) -> int:
     if args[0] == "uninstall":
         gui().confirm_uninstall()
         return 0
-    if args[0] == "run" and sys.stdout is None:  # sin consola: inicio de Windows o lanzado por el instalador
+    if args[0] == "run" and sys.stdout is None:  # no console: Windows startup or launched by the installer
         return background(args, paths)
     return agent.main(args)
 

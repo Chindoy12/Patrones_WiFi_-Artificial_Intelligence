@@ -1,23 +1,24 @@
-"""Reconocer los equipos de la red (agente 1.8.0): qué nombre anuncian, qué modelo son y qué tipo de equipo parecen.
+"""Recognising the devices of the network (agent 1.8.0): which name they announce, which model they are and which kind
+of device they seem to be.
 
-Los celulares esconden su fabricante detrás de una MAC privada y muchos no anuncian un nombre por DNS ni NetBIOS. Lo
-que sí anuncian muchos equipos es lo que ofrecen en la red, para que otros los encuentren:
+Phones hide their maker behind a private MAC and many announce no name over DNS or NetBIOS. What many devices do
+announce is what they offer on the network, so that others can find them:
 
-* **mDNS / Bonjour** (``_servicio._tcp.local``): un iPhone o un Mac anuncia ``_companion-link`` con su nombre
-  ("iPhone de Ana"), un Chromecast ``_googlecast`` con el nombre de la sala ("Sala TV") y su modelo, una impresora
-  ``_ipp``, un accesorio de casa inteligente ``_hap``…
-* **UPnP / SSDP**: televisores, decodificadores, consolas y parlantes responden con una dirección donde describen su
-  nombre, fabricante y modelo.
-* **Puertos abiertos**: un iPhone o iPad tiene abierto el 62078, un Chromecast el 8009, una impresora el 9100, una
-  cámara el 554 (RTSP)… Se prueba solo si el puerto acepta conexión (sin enviar nada) y solo en la red local.
-* **DHCP** (agente 1.8.0): al conectarse, cada equipo pide su dirección con un mensaje a toda la red que incluye el
-  nombre que tiene configurado ("Galaxy-A54-de-Ana", "DESKTOP-7Q2M"). Es de donde el router saca la lista de equipos
-  conectados. El agente solo escucha esos mensajes (no responde ni pide nada) y recuerda el nombre de cada equipo
-  mientras está abierto. Necesita que Windows permita al agente recibirlos (la primera vez pregunta) y que la red no
-  bloquee los mensajes entre equipos, cosa que hacen muchas redes de universidades y lugares públicos.
+* **mDNS / Bonjour** (``_service._tcp.local``): an iPhone or a Mac announces ``_companion-link`` with its name
+  ("iPhone de Ana"), a Chromecast ``_googlecast`` with the name of the room ("Sala TV") and its model, a printer
+  ``_ipp``, a smart home accessory ``_hap``...
+* **UPnP / SSDP**: TVs, set-top boxes, consoles and speakers answer with an address where they describe their name,
+  maker and model.
+* **Open ports**: an iPhone or iPad has 62078 open, a Chromecast 8009, a printer 9100, a camera 554 (RTSP)... It only
+  checks whether the port accepts a connection (sending nothing) and only on the local network.
+* **DHCP** (agent 1.8.0): when it connects, each device asks for its address with a message to the whole network that
+  includes the name it is configured with ("Galaxy-A54-de-Ana", "DESKTOP-7Q2M"). That is where the router gets the list
+  of connected devices from. The agent only listens to those messages (it neither answers nor asks anything) and
+  remembers the name of each device while it is open. Windows must allow the agent to receive them (it asks the first
+  time) and the network must not block messages between devices, which many university and public networks do.
 
-Con eso se deduce el **tipo** (PHONE, COMPUTER, TV, PRINTER, CAMERA, SPEAKER, CONSOLE o IOT), que siempre es una
-suposición. Nada de esto sale del computador salvo el nombre, el modelo y el tipo: la MAC sigue quedándose aquí.
+From that the **kind** is deduced (PHONE, COMPUTER, TV, PRINTER, CAMERA, SPEAKER, CONSOLE or IOT), which is always a
+guess. None of this leaves the computer except the name, the model and the kind: the MAC still stays here.
 """
 from __future__ import annotations
 
@@ -32,15 +33,20 @@ import xml.etree.ElementTree as ElementTree
 from concurrent.futures import ThreadPoolExecutor
 from typing import Iterable, Optional
 
+try:  # the agent as a package (tests) or as loose scripts (PyInstaller, python wifisense_agent.py)
+    from agent.dns_wire import dns_name, read_name
+except ImportError:  # pragma: no cover
+    from dns_wire import dns_name, read_name
+
 MDNS_GROUP = ("224.0.0.251", 5353)
 SSDP_GROUP = ("239.255.255.250", 1900)
 DNS_A, DNS_PTR, DNS_TXT, DNS_SRV = 1, 12, 16, 33
 
-# Servicios que anuncian los equipos de una casa o una oficina y el tipo de equipo que sugieren (None: no dice nada).
+# Services the devices of a home or an office announce and the kind of device they suggest (None: says nothing).
 SERVICES = {
-    "_companion-link._tcp.local": None,      # iPhone, iPad y Mac (el nombre decide)
+    "_companion-link._tcp.local": None,      # iPhone, iPad and Mac (the name decides)
     "_apple-mobdev2._tcp.local": "PHONE",
-    "_device-info._tcp.local": None,          # modelo de equipos Apple ("MacBookPro18,1", "iPad13,4")
+    "_device-info._tcp.local": None,          # model of Apple devices ("MacBookPro18,1", "iPad13,4")
     "_airplay._tcp.local": "TV",
     "_raop._tcp.local": "SPEAKER",
     "_googlecast._tcp.local": "TV",
@@ -59,10 +65,10 @@ SERVICES = {
     "_rfb._tcp.local": "COMPUTER",
 }
 
-# Puerto abierto -> tipo de equipo. Solo puertos muy característicos, para no confundir.
+# Open port -> kind of device. Only very characteristic ports, so as not to confuse.
 PORT_KINDS = {
-    62078: "PHONE",     # servicio de sincronización de iPhone y iPad
-    8009: "TV",         # Google Cast (Chromecast, Google TV, televisores con Cast)
+    62078: "PHONE",     # sync service of iPhone and iPad
+    8009: "TV",         # Google Cast (Chromecast, Google TV, TVs with Cast)
     8060: "TV",         # Roku
     8001: "TV",         # televisores Samsung
     1925: "TV",         # televisores Philips
@@ -70,14 +76,14 @@ PORT_KINDS = {
     9100: "PRINTER",
     631: "PRINTER",
     515: "PRINTER",
-    554: "CAMERA",      # RTSP: cámaras IP y grabadores
+    554: "CAMERA",      # RTSP: IP cameras and recorders
     1400: "SPEAKER",    # Sonos
-    445: "COMPUTER",    # carpetas compartidas de Windows
-    3389: "COMPUTER",   # escritorio remoto de Windows
+    445: "COMPUTER",    # Windows shared folders
+    3389: "COMPUTER",   # Windows remote desktop
     1883: "IOT",        # MQTT
 }
 
-# Palabras en el nombre o el modelo que dicen el tipo con más certeza que un puerto.
+# Words in the name or the model that tell the kind with more certainty than a port.
 NAME_KINDS = (
     (r"iphone|galaxy|pixel|redmi|moto|celular|android|xiaomi|huawei|honor|oppo|vivo|realme|oneplus", "PHONE"),
     (r"ipad|tablet|tab[ -]", "PHONE"),
@@ -95,25 +101,25 @@ NAME_KINDS = (
 
 DHCP_SERVER_PORT = 67
 DHCP_MAGIC = b"\x63\x82\x53\x63"
-# Nombres que no dicen nada: los que pone el sistema solo (Android viejo, placas ESP de casa inteligente) o vacíos.
+# Names that say nothing: those the system sets by itself (old Android, ESP smart home boards) or empty ones.
 GENERIC_DHCP_NAMES = re.compile(r"^(android-[0-9a-f]{6,}|localhost|unknown|espressif|esp[-_]?[0-9a-f]{4,}|"
                                 r"[0-9a-f]{12}|[0-9a-f:-]{17})$", re.I)
 
 
 def fqdn_first_label(value: bytes) -> Optional[str]:
-    """Opción 81 (FQDN del cliente): banderas, dos códigos y el nombre, en texto o en formato DNS (bandera E)."""
+    """Option 81 (client FQDN): flags, two codes and the name, as text or in DNS format (flag E)."""
     if len(value) < 4:
         return None
     flags, name = value[0], value[3:]
-    if flags & 0x04:  # formato de DNS: longitud + etiqueta
+    if flags & 0x04:  # DNS format: length + label
         length = name[0]
         return name[1:1 + length].decode("utf-8", "replace") if length else None
     return name.decode("utf-8", "replace").split(".")[0]
 
 
 def parse_dhcp_request(data: bytes) -> Optional[dict]:
-    """De una solicitud DHCP (DISCOVER o REQUEST): la MAC del equipo, el nombre que dice y su clase de fabricante
-    ("android-dhcp-14", "MSFT 5.0"). None si el paquete no es una solicitud DHCP de Ethernet o Wi-Fi."""
+    """From a DHCP request (DISCOVER or REQUEST): the MAC of the device, the name it gives and its vendor class
+    ("android-dhcp-14", "MSFT 5.0"). None if the packet is not a DHCP request from Ethernet or Wi-Fi."""
     if len(data) < 240 or data[0] != 1 or data[1] != 1 or data[2] != 6 or data[236:240] != DHCP_MAGIC:
         return None
     found = {"mac": ":".join(f"{b:02x}" for b in data[28:34])}
@@ -146,7 +152,7 @@ def parse_dhcp_request(data: bytes) -> Optional[dict]:
 
 
 def dhcp_kind(vendor_class: Optional[str]) -> Optional[str]:
-    """La clase de fabricante dice el sistema: 'android-dhcp-14' es un Android, 'MSFT 5.0' un Windows."""
+    """The vendor class tells the system: 'android-dhcp-14' is an Android, 'MSFT 5.0' a Windows."""
     text = (vendor_class or "").lower()
     if text.startswith("android"):
         return "PHONE"
@@ -156,8 +162,9 @@ def dhcp_kind(vendor_class: Optional[str]) -> Optional[str]:
 
 
 class DhcpWatcher:
-    """Escucha en segundo plano las solicitudes DHCP de la red y recuerda, por MAC, el nombre y la clase de cada
-    equipo. Si el puerto 67 no se puede abrir (otro programa lo usa o el sistema no lo permite), no hace nada."""
+    """Listens in the background to the DHCP requests of the network and remembers, by MAC, the name and the class of
+    each device. If port 67 cannot be opened (another program uses it or the system does not allow it), it does
+    nothing."""
 
     def __init__(self) -> None:
         self._seen: dict[str, dict] = {}
@@ -203,35 +210,13 @@ DHCP = DhcpWatcher()
 
 # ---------------------------------------------------------------------------------------------------- mDNS / Bonjour
 
-def dns_name(name: str) -> bytes:
-    return b"".join(bytes([len(part)]) + part.encode() for part in name.split(".") if part) + b"\0"
-
-
 def mdns_browse_query(services: Iterable[str]) -> bytes:
-    """Una sola pregunta PTR por cada servicio, con el bit QU para que los equipos respondan directo a este computador."""
+    """A single PTR question for each service, with the QU bit so the devices answer this computer directly."""
     services = list(services)
     packet = struct.pack("!HHHHHH", 0, 0, len(services), 0, 0, 0)
     for service in services:
         packet += dns_name(service) + struct.pack("!HH", DNS_PTR, 0x8001)
     return packet
-
-
-def read_name(data: bytes, offset: int, depth: int = 0) -> tuple[str, int]:
-    """Nombre DNS con punteros de compresión -> (nombre, posición siguiente)."""
-    parts, end = [], None
-    while depth < 20:
-        length = data[offset]
-        if length == 0:
-            offset += 1
-            break
-        if length & 0xC0 == 0xC0:
-            pointer = struct.unpack_from("!H", data, offset)[0] & 0x3FFF
-            end = end if end is not None else offset + 2
-            offset, depth = pointer, depth + 1
-            continue
-        parts.append(data[offset + 1: offset + 1 + length].decode("utf-8", "replace"))
-        offset += 1 + length
-    return ".".join(parts), end if end is not None else offset
 
 
 def parse_txt(data: bytes) -> dict[str, str]:
@@ -247,7 +232,7 @@ def parse_txt(data: bytes) -> dict[str, str]:
 
 
 def parse_mdns_records(data: bytes) -> list[tuple[str, int, object]]:
-    """Todos los registros (respuestas y adicionales) de un paquete mDNS: (nombre, tipo, valor)."""
+    """All the records (answers and additional) of an mDNS packet: (name, type, value)."""
     records = []
     try:
         _, flags, questions, answers, authority, additional = struct.unpack_from("!HHHHHH", data, 0)
@@ -270,7 +255,7 @@ def parse_mdns_records(data: bytes) -> list[tuple[str, int, object]]:
             elif rtype == DNS_A and length == 4:
                 records.append((name, rtype, socket.inet_ntoa(rdata)))
             offset += length
-    except (struct.error, IndexError, OSError):
+    except (struct.error, IndexError, OSError, ValueError):
         pass
     return records
 
@@ -281,7 +266,7 @@ def instance_label(instance: str, service: str) -> str:
 
 
 def mdns_identity(packets: Iterable[tuple[str, bytes]]) -> dict[str, dict]:
-    """Por IP: el nombre que anuncia, su modelo y el tipo que sugieren sus servicios."""
+    """By IP: the name it announces, its model and the kind its services suggest."""
     found: dict[str, dict] = {}
     for source_ip, data in packets:
         info = found.setdefault(source_ip, {})
@@ -294,11 +279,11 @@ def mdns_identity(packets: Iterable[tuple[str, bytes]]) -> dict[str, dict]:
                 if label and name in ("_companion-link._tcp.local", "_airplay._tcp.local", "_raop._tcp.local",
                                       "_ipp._tcp.local", "_printer._tcp.local", "_hap._tcp.local",
                                       "_spotify-connect._tcp.local", "_smb._tcp.local", "_workstation._tcp.local"):
-                    label = re.sub(r"^[0-9A-F]{12}@", "", label)  # RAOP antepone la MAC: no se usa
-                    label = re.sub(r"\s*\[[0-9a-f:]{17}\]$", "", label, flags=re.I)  # _workstation agrega la MAC
+                    label = re.sub(r"^[0-9A-F]{12}@", "", label)  # RAOP puts the MAC first: not used
+                    label = re.sub(r"\s*\[[0-9a-f:]{17}\]$", "", label, flags=re.I)  # _workstation adds the MAC
                     info.setdefault("name", label)
             elif rtype == DNS_TXT and isinstance(value, dict):
-                if value.get("fn"):            # Google Cast: nombre que le pusieron ("Sala TV")
+                if value.get("fn"):            # Google Cast: the name it was given ("Sala TV")
                     info["name"] = value["fn"]
                 model = value.get("model") or value.get("md") or value.get("am") or value.get("ty") or value.get("rpmd")
                 if model:
@@ -307,7 +292,7 @@ def mdns_identity(packets: Iterable[tuple[str, bytes]]) -> dict[str, dict]:
 
 
 def mdns_browse(timeout: float = 2.5) -> dict[str, dict]:
-    """Pregunta en la red qué servicios hay y junta las respuestas que lleguen en ``timeout`` segundos."""
+    """Asks the network which services there are and gathers the answers that arrive within ``timeout`` seconds."""
     packets: list[tuple[str, bytes]] = []
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
@@ -318,7 +303,7 @@ def mdns_browse(timeout: float = 2.5) -> dict[str, dict]:
             resent = False
             while time.monotonic() < deadline:
                 if not resent and time.monotonic() > deadline - timeout / 2:
-                    sock.sendto(query, MDNS_GROUP)  # una segunda vez: algunos equipos dormidos tardan
+                    sock.sendto(query, MDNS_GROUP)  # a second time: some sleeping devices are slow
                     resent = True
                 try:
                     data, (ip, _) = sock.recvfrom(9000)
@@ -342,7 +327,7 @@ def parse_ssdp_location(response: bytes) -> Optional[str]:
 
 
 def parse_upnp_description(xml_text: str) -> dict:
-    """friendlyName, fabricante y modelo de la descripción UPnP de un equipo."""
+    """friendlyName, maker and model from the UPnP description of a device."""
     try:
         root = ElementTree.fromstring(xml_text)
     except ElementTree.ParseError:
@@ -377,7 +362,7 @@ def is_private(ip: str) -> bool:
 
 
 def fetch_description(location: str, source_ip: str, timeout: float = 1.5) -> dict:
-    """Solo descripciones del mismo equipo que respondió, en la red local, y de máximo 64 KB."""
+    """Only descriptions of the same device that answered, on the local network, and of at most 64 KB."""
     match = re.match(r"https?://([^/:]+)", location)
     if not match or match.group(1) != source_ip or not is_private(source_ip):
         return {}
@@ -423,7 +408,7 @@ def port_open(ip: str, port: int, timeout: float = 0.4) -> bool:
 
 
 def port_kinds(ips: Iterable[str], skip: Iterable[str] = ()) -> dict[str, list[str]]:
-    """Por IP, los tipos que sugieren sus puertos abiertos (solo IPs privadas; nunca el router ni este computador)."""
+    """By IP, the kinds its open ports suggest (only private IPs; never the router nor this computer)."""
     skip = set(skip)
     targets = [(ip, port) for ip in ips if ip not in skip and is_private(ip) for port in PORT_KINDS]
     if not targets:
@@ -449,8 +434,8 @@ def kind_from_text(text: Optional[str]) -> Optional[str]:
 
 def decide_kind(name: Optional[str], model: Optional[str], vendor: Optional[str], hints: list[str],
                 private_mac: bool) -> Optional[str]:
-    """El nombre o el modelo mandan; luego lo que sugieren servicios y puertos (el más repetido); y una MAC privada
-    sin nada más casi siempre es un celular o una tableta."""
+    """The name or the model rule; then what services and ports suggest (the most repeated one); and a private MAC with
+    nothing else is almost always a phone or a tablet."""
     by_text = kind_from_text(" ".join(filter(None, [name, model])))
     if by_text:
         return by_text
@@ -473,7 +458,7 @@ def decide_kind(name: Optional[str], model: Optional[str], vendor: Optional[str]
 
 
 def identify(ips: list[str], own_ip: Optional[str], gateway: Optional[str]) -> dict[str, dict]:
-    """Junta lo que anuncian (mDNS y UPnP) y los puertos de cada IP, en paralelo (unos 3 segundos en total)."""
+    """Gathers what they announce (mDNS and UPnP) and the ports of each IP, in parallel (about 3 seconds in total)."""
     with ThreadPoolExecutor(max_workers=3) as pool:
         mdns = pool.submit(mdns_browse)
         ssdp = pool.submit(ssdp_discover)
