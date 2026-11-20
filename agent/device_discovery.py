@@ -32,6 +32,11 @@ import xml.etree.ElementTree as ElementTree
 from concurrent.futures import ThreadPoolExecutor
 from typing import Iterable, Optional
 
+try:  # the agent as a package (tests) or as loose scripts (PyInstaller, python wifisense_agent.py)
+    from agent.dns_wire import dns_name, read_name
+except ImportError:  # pragma: no cover
+    from dns_wire import dns_name, read_name
+
 MDNS_GROUP = ("224.0.0.251", 5353)
 SSDP_GROUP = ("239.255.255.250", 1900)
 DNS_A, DNS_PTR, DNS_TXT, DNS_SRV = 1, 12, 16, 33
@@ -203,10 +208,6 @@ DHCP = DhcpWatcher()
 
 # ---------------------------------------------------------------------------------------------------- mDNS / Bonjour
 
-def dns_name(name: str) -> bytes:
-    return b"".join(bytes([len(part)]) + part.encode() for part in name.split(".") if part) + b"\0"
-
-
 def mdns_browse_query(services: Iterable[str]) -> bytes:
     """Una sola pregunta PTR por cada servicio, con el bit QU para que los equipos respondan directo a este computador."""
     services = list(services)
@@ -214,24 +215,6 @@ def mdns_browse_query(services: Iterable[str]) -> bytes:
     for service in services:
         packet += dns_name(service) + struct.pack("!HH", DNS_PTR, 0x8001)
     return packet
-
-
-def read_name(data: bytes, offset: int, depth: int = 0) -> tuple[str, int]:
-    """Nombre DNS con punteros de compresión -> (nombre, posición siguiente)."""
-    parts, end = [], None
-    while depth < 20:
-        length = data[offset]
-        if length == 0:
-            offset += 1
-            break
-        if length & 0xC0 == 0xC0:
-            pointer = struct.unpack_from("!H", data, offset)[0] & 0x3FFF
-            end = end if end is not None else offset + 2
-            offset, depth = pointer, depth + 1
-            continue
-        parts.append(data[offset + 1: offset + 1 + length].decode("utf-8", "replace"))
-        offset += 1 + length
-    return ".".join(parts), end if end is not None else offset
 
 
 def parse_txt(data: bytes) -> dict[str, str]:
@@ -270,7 +253,7 @@ def parse_mdns_records(data: bytes) -> list[tuple[str, int, object]]:
             elif rtype == DNS_A and length == 4:
                 records.append((name, rtype, socket.inet_ntoa(rdata)))
             offset += length
-    except (struct.error, IndexError, OSError):
+    except (struct.error, IndexError, OSError, ValueError):
         pass
     return records
 

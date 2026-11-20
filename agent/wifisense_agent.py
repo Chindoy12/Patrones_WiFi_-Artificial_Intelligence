@@ -82,16 +82,6 @@ IS_WINDOWS = os.name == "nt"
 
 # --------------------------------------------------------------------------------------------- comandos del sistema
 
-def decode(raw: bytes) -> str:
-    """netsh escribe en la página de códigos de la consola (cp850 en español); se prueba UTF-8 primero."""
-    for encoding in ("utf-8", "oem", "cp850", "latin-1"):
-        try:
-            return raw.decode(encoding)
-        except (UnicodeDecodeError, LookupError):
-            continue
-    return raw.decode("latin-1", errors="replace")
-
-
 def run_command(args: list[str], timeout: float = 15) -> str:
     """Salida del comando, o cadena vacía si no existe o falla. Nunca usa el shell."""
     try:
@@ -99,7 +89,7 @@ def run_command(args: list[str], timeout: float = 15) -> str:
                                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     except (OSError, subprocess.SubprocessError):
         return ""
-    return decode(result.stdout)
+    return console_text(result.stdout)
 
 
 def read_file(path: str) -> str:
@@ -112,11 +102,13 @@ def read_file(path: str) -> str:
 # ------------------------------------------------------------------------------------------------------- Wi-Fi
 
 try:  # el agente como paquete (pruebas) o como script suelto (PyInstaller, python wifisense_agent.py)
-    from agent.wifi_text import (authentication_of, band_of, cipher_of, first_number, key_values, normalize_key,
-                                 split_nmcli, CIPHERS)
+    from agent.dns_wire import dns_name, read_name
+    from agent.wifi_text import (authentication_of, band_of, cipher_of, console_text, first_number, key_values,
+                                 normalize_key, split_nmcli)
 except ImportError:  # pragma: no cover
-    from wifi_text import (authentication_of, band_of, cipher_of, first_number, key_values, normalize_key,
-                           split_nmcli, CIPHERS)
+    from dns_wire import dns_name, read_name
+    from wifi_text import (authentication_of, band_of, cipher_of, console_text, first_number, key_values,
+                           normalize_key, split_nmcli)
 
 # Prefijos de cada campo en inglés y en español (incluye cómo se ven si la consola dañó las tildes).
 WIFI_KEYS = {
@@ -508,34 +500,11 @@ MDNS_GROUP = ("224.0.0.251", 5353)
 DNS_PTR = 12
 
 
-def dns_name(name: str) -> bytes:
-    """Nombre en el formato de DNS: cada parte con su longitud delante y un 0 al final."""
-    return b"".join(bytes([len(part)]) + part.encode() for part in name.split(".") if part) + b"\0"
-
-
 def mdns_query(ip: str) -> bytes:
     """Pregunta PTR por la IP al revés (4.3.2.1.in-addr.arpa) con el bit QU, para que el equipo responda directo."""
     reverse = ".".join(reversed(ip.split("."))) + ".in-addr.arpa"
     header = struct.pack("!HHHHHH", 0, 0, 1, 0, 0, 0)  # id 0, consulta normal, 1 pregunta
     return header + dns_name(reverse) + struct.pack("!HH", DNS_PTR, 0x8001)  # tipo PTR, clase IN con bit QU
-
-
-def read_dns_name(data: bytes, offset: int, depth: int = 0) -> tuple[str, int]:
-    """Lee un nombre de un paquete DNS (con los punteros de compresión) y devuelve (nombre, posición siguiente)."""
-    parts, end = [], None
-    while depth < 20:
-        length = data[offset]
-        if length == 0:
-            offset += 1
-            break
-        if length & 0xC0 == 0xC0:  # puntero: el resto del nombre está en otra parte del paquete
-            pointer = struct.unpack_from("!H", data, offset)[0] & 0x3FFF
-            end = end if end is not None else offset + 2
-            offset, depth = pointer, depth + 1
-            continue
-        parts.append(data[offset + 1: offset + 1 + length].decode("utf-8", "replace"))
-        offset += 1 + length
-    return ".".join(parts), end if end is not None else offset
 
 
 def parse_mdns_ptr(data: bytes) -> Optional[str]:
@@ -546,15 +515,15 @@ def parse_mdns_ptr(data: bytes) -> Optional[str]:
             return None
         offset = 12
         for _ in range(questions):
-            offset = read_dns_name(data, offset)[1] + 4
+            offset = read_name(data, offset)[1] + 4
         for _ in range(answers):
-            offset = read_dns_name(data, offset)[1]
+            offset = read_name(data, offset)[1]
             rtype, _, _, length = struct.unpack_from("!HHIH", data, offset)
             offset += 10
             if rtype == DNS_PTR:
-                return read_dns_name(data, offset)[0]
+                return read_name(data, offset)[0]
             offset += length
-    except (struct.error, IndexError):
+    except (struct.error, IndexError, ValueError):
         pass
     return None
 

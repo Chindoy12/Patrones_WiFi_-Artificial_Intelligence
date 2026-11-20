@@ -11,6 +11,17 @@ import unicodedata
 from typing import Optional
 
 
+def console_text(raw: bytes) -> str:
+    """What a command wrote, as text: netsh writes in the code page of the console (cp850 in Spanish), so UTF-8 is
+    tried first and latin-1, which decodes anything, last."""
+    for encoding in ("utf-8", "oem", "cp850", "latin-1"):
+        try:
+            return raw.decode(encoding)
+        except (UnicodeDecodeError, LookupError):
+            continue
+    return raw.decode("latin-1", errors="replace")  # pragma: no cover (latin-1 always decodes)
+
+
 def normalize_key(key: str) -> str:
     """Clave de netsh en minúsculas, sin tildes ni espacios ('Autenticación' -> 'autenticacion')."""
     ascii_key = unicodedata.normalize("NFKD", key.lower())

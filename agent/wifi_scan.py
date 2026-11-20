@@ -28,11 +28,11 @@ import time
 from typing import Callable, Optional
 
 try:  # el agente como paquete (pruebas) o como script suelto (PyInstaller, python wifisense_agent.py)
-    from agent.wifi_text import authentication_of, band_of, cipher_of, first_number, key_values, normalize_key, \
-        split_nmcli
+    from agent.wifi_text import authentication_of, band_of, cipher_of, console_text, first_number, key_values, \
+        normalize_key, split_nmcli
 except ImportError:  # pragma: no cover
-    from wifi_text import authentication_of, band_of, cipher_of, first_number, key_values, normalize_key, \
-        split_nmcli
+    from wifi_text import authentication_of, band_of, cipher_of, console_text, first_number, key_values, \
+        normalize_key, split_nmcli
 
 COMMAND_TIMEOUT = 20      # segundos que puede tardar netsh o nmcli antes de cancelarlo
 FRESH_SCAN_WAIT = 4.0     # segundos que Windows necesita para terminar el escaneo que se le pidió
@@ -51,16 +51,6 @@ class CommandResult:
         self.code, self.text, self.timed_out, self.missing = code, text, timed_out, missing
 
 
-def decode(raw: bytes) -> str:
-    """netsh escribe en la página de códigos de la consola (cp850 en español); se prueba UTF-8 primero."""
-    for encoding in ("utf-8", "oem", "cp850", "latin-1"):
-        try:
-            return raw.decode(encoding)
-        except (UnicodeDecodeError, LookupError):
-            continue
-    return raw.decode("latin-1", errors="replace")  # pragma: no cover (latin-1 siempre decodifica)
-
-
 def run(args: list[str], timeout: float = COMMAND_TIMEOUT) -> CommandResult:
     """Ejecuta un comando con sus argumentos por separado (nunca con el shell, así un nombre de red no puede inyectar
     nada) y con tiempo límite."""
@@ -73,7 +63,7 @@ def run(args: list[str], timeout: float = COMMAND_TIMEOUT) -> CommandResult:
         return CommandResult(None, "", missing=True)
     except (OSError, subprocess.SubprocessError) as error:
         return CommandResult(None, str(error))
-    return CommandResult(done.returncode, decode(done.stdout) + decode(done.stderr))
+    return CommandResult(done.returncode, console_text(done.stdout) + console_text(done.stderr))
 
 
 # ------------------------------------------------------------------------------------------- errores de Windows

@@ -24,6 +24,11 @@ import struct
 import time
 from typing import Iterable, Optional, Protocol
 
+try:  # the agent as a package (tests) or as loose scripts (PyInstaller, python wifisense_agent.py)
+    from agent.dns_wire import read_name
+except ImportError:  # pragma: no cover
+    from dns_wire import read_name
+
 DNS_PORT = 53
 TYPE_PTR, CLASS_IN = 12, 1
 MAX_QUERIES = 1024
@@ -64,28 +69,6 @@ def ptr_query(ip: str, query_id: int) -> bytes:
     """Pregunta PTR estándar con recursión pedida (el router responde de su propia tabla)."""
     return struct.pack("!HHHHHH", query_id, 0x0100, 1, 0, 0, 0) + encode_name(reverse_name(ip)) + struct.pack(
         "!HH", TYPE_PTR, CLASS_IN)
-
-
-def read_name(data: bytes, offset: int, depth: int = 0) -> tuple[str, int]:
-    """Nombre DNS con compresión (punteros), protegido contra bucles y paquetes cortados."""
-    if depth > 10:
-        raise ValueError("demasiados punteros")
-    labels = []
-    while True:
-        if offset >= len(data):
-            raise ValueError("nombre cortado")
-        length = data[offset]
-        if length == 0:
-            return ".".join(labels), offset + 1
-        if length & 0xC0 == 0xC0:
-            if offset + 1 >= len(data):
-                raise ValueError("puntero cortado")
-            pointer = ((length & 0x3F) << 8) | data[offset + 1]
-            name, _ = read_name(data, pointer, depth + 1)
-            labels.append(name)
-            return ".".join(label for label in labels if label), offset + 2
-        labels.append(data[offset + 1:offset + 1 + length].decode("utf-8", "replace"))
-        offset += 1 + length
 
 
 def parse_ptr_answer(data: bytes) -> tuple[int, Optional[str]]:
