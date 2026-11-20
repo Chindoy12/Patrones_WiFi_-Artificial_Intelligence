@@ -30,7 +30,7 @@ ERROR_GOAL = 0.01
 
 
 def percentile(values: list[float], pct: float) -> float:
-    """Percentil por el método del rango más cercano."""
+    """Percentile by the nearest-rank method."""
     if not values:
         return 0.0
     ordered = sorted(values)
@@ -39,7 +39,7 @@ def percentile(values: list[float], pct: float) -> float:
 
 
 def window(rng: random.Random, size: int = 20, degraded: bool = False) -> list[dict]:
-    """Una ventana de mediciones como la que arma el backend; la última puede venir degradada."""
+    """A window of measurements like the one the backend builds; the last one may come degraded."""
     start = datetime.now(timezone.utc) - timedelta(minutes=5 * size)
     samples = []
     for i in range(size):

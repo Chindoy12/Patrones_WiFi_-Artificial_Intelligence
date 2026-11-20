@@ -1,4 +1,4 @@
-"""Los dos análisis nuevos por la API: contrato, validación (422) y clave del servicio."""
+"""The two new analyses through the API: contract, validation (422) and key of the service."""
 
 
 def test_traffic_analyze_answers_facts_inferences_and_uncertainty(client):

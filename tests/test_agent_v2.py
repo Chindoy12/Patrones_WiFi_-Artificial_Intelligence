@@ -1,5 +1,5 @@
-"""Agente 2.0.0: la máscara real de la red, el origen de cada nombre, las capacidades en el reporte y las capturas que
-pide el servidor (solo por su número)."""
+"""Agent 2.0.0: the real mask of the network, the source of each name, the capabilities in the report and the
+captures the server asks for (only by their number)."""
 import io
 import json
 import urllib.error
@@ -55,7 +55,7 @@ Wireless LAN adapter Wi-Fi:
 def test_the_real_mask_of_the_network_is_read_from_ipconfig_in_spanish_and_english():
     assert agent.parse_ipconfig_prefix(IPCONFIG_ES, "10.20.5.40") == 21
     assert agent.parse_ipconfig_prefix(IPCONFIG_EN, "192.168.1.23") == 23
-    assert agent.parse_ipconfig_prefix(IPCONFIG_EN, "192.168.1.2") is None  # 192.168.1.23 no es 192.168.1.2
+    assert agent.parse_ipconfig_prefix(IPCONFIG_EN, "192.168.1.2") is None  # 192.168.1.23 is not 192.168.1.2
 
 
 def test_the_real_prefix_is_read_from_ip_addr_on_linux():
@@ -75,7 +75,7 @@ def test_without_an_answer_from_the_system_the_network_is_assumed_to_be_a_24(mon
 def test_a_classmate_in_another_part_of_a_big_university_network_is_now_seen():
     table = {"10.20.7.12": "aa:bb:cc:00:00:01", "10.20.5.99": "aa:bb:cc:00:00:02", "10.30.0.5": "aa:bb:cc:00:00:03"}
 
-    assert set(agent.same_subnet(table, "10.20.5.40", 24)) == {"10.20.5.99"}  # lo que hacía la 1.9
+    assert set(agent.same_subnet(table, "10.20.5.40", 24)) == {"10.20.5.99"}  # what 1.9 did
     assert set(agent.same_subnet(table, "10.20.5.40", 21)) == {"10.20.7.12", "10.20.5.99"}
 
 
@@ -98,7 +98,7 @@ def test_a_huge_network_is_woken_only_around_this_computer(monkeypatch):
     monkeypatch.setattr(agent.socket, "socket", Socket)
     agent.wake_neighbors("10.20.5.40", 16)
 
-    assert len(sent) == 1022  # /22, no las 65 534 direcciones de una /16
+    assert len(sent) == 1022  # /22, not the 65 534 addresses of a /16
     assert "10.20.4.1" in sent and "10.20.7.254" in sent and "10.20.8.1" not in sent
 
 
@@ -129,7 +129,7 @@ def test_router_names_are_asked_to_the_router_and_a_silent_router_gives_none():
             return {"192.168.1.23": "Portatil-de-Ana.lan", "192.168.1.24": "192.168.1.24"}
 
     assert agent.router_names("192.168.1.1", ["192.168.1.23", "192.168.1.24"], lambda gw: Source()) == {
-        "192.168.1.23": "Portatil-de-Ana.lan"}  # una "IP como nombre" no es un nombre
+        "192.168.1.23": "Portatil-de-Ana.lan"}  # an "IP as a name" is not a name
 
     class Broken:
         def names(self, ips):
@@ -204,7 +204,7 @@ def test_while_waiting_the_sensor_asks_for_captures_and_a_home_agent_stops_askin
     agent.wait_watching_tasks(120, SERVER, SENSOR, "sal", {"captureConsent": True}, sleep=sleep,
                               clock=lambda: clock[0], opener=opener)
 
-    assert asked.count("scans/next") == 1  # 404: un sensor no tiene escaneos; no se vuelve a preguntar
+    assert asked.count("scans/next") == 1  # 404: a sensor has no scans; it is not asked again
     assert asked.count("captures/next") == 3
     assert ran == [{"captureId": 41, "maxSeconds": 20, "maxPackets": 100, "maxBytes": 1048576}]
 
@@ -291,7 +291,7 @@ def test_a_capture_announced_in_the_answer_but_already_taken_is_not_run_with_mad
 
 
 def test_the_version_is_2_1_0():
-    assert agent.AGENT_VERSION == "2.1.0"  # 2.1.0: medición en vivo
+    assert agent.AGENT_VERSION == "2.1.0"  # 2.1.0: live measurement
 
 
 @pytest.mark.parametrize("text, expected", [

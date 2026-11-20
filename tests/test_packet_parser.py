@@ -1,4 +1,4 @@
-"""Cabeceras -> protocolo, puertos y difusión, sin abrir nunca el contenido del paquete."""
+"""Headers -> protocol, ports and broadcast, without ever opening the content of the packet."""
 import dataclasses
 import struct
 

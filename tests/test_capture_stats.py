@@ -1,4 +1,4 @@
-"""Lo único que sale de una captura: conteos que cuadran, dentro de los límites, sin direcciones."""
+"""The only thing that leaves a capture: counts that add up, within the limits, without addresses."""
 import json
 
 import pytest
@@ -20,7 +20,7 @@ def add(s: CaptureStats, frame: bytes, at: float) -> bool:
 
 
 def recorder_check(result: dict, limits: Limits) -> None:
-    """Las mismas reglas que CaptureRecorder.check en el backend: lo que no cuadre, el servidor lo rechaza."""
+    """The same rules as CaptureRecorder.check in the backend: whatever does not add up, the server rejects."""
     packets, size = result["packetCount"], result["byteCount"]
     assert packets <= limits.packets and size <= limits.bytes
     assert result.get("broadcastPackets", 0) + result.get("multicastPackets", 0) <= packets
@@ -47,7 +47,7 @@ def test_a_capture_counts_protocols_directions_and_seconds_without_any_address()
     assert {p["protocol"]: p["packets"] for p in result["protocols"]} == {
         "HTTPS": 2, "DNS": 1, "ARP": 1, "MDNS": 1, "DHCP": 1}
     assert result["broadcastPackets"] == 2 and result["multicastPackets"] == 1
-    assert result["outboundBytes"] == len(samples.https_out()) + len(samples.dns_query())  # ARP no lleva IP
+    assert result["outboundBytes"] == len(samples.https_out()) + len(samples.dns_query())  # ARP carries no IP
     assert result["inboundBytes"] == len(samples.https_in())
     assert result["distinctRemoteHosts"] == 1 and result["distinctLocalHosts"] >= 2
     assert [i["second"] for i in result["intervals"]] == [0, 1, 2]

@@ -1,4 +1,4 @@
-"""Una captura completa desde el pedido hasta la entrega: permiso local, herramienta, parada, conteos y limpieza."""
+"""A whole capture from the request to the delivery: local permission, tool, stop, counts and cleanup."""
 import json
 
 import pytest
@@ -9,7 +9,7 @@ from tests import capture_samples as samples
 
 
 class OneShot:
-    """Una herramienta de prueba que 'captura' unos paquetes, o falla como se le diga."""
+    """A test tool that 'captures' a few packets, or fails as it is told."""
     code = "NPCAP"
 
     def __init__(self, frames=(), fail=None, usable=True, until_stopped=False):

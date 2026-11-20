@@ -243,9 +243,9 @@ def test_devices_carry_a_fingerprint_vendor_and_name(monkeypatch):
     assert len(found) == 2
     assert by_vendor["Apple"]["id"] == agent.mac_fingerprint("fc:fb:fb:11:22:33", "sal")
     assert by_vendor["Apple"]["name"] == "iPhone-de-Ana"
-    assert None in by_vendor  # el equipo sin OUI conocido no lleva fabricante
-    assert "name" not in by_vendor[None]  # tampoco nombre si nadie respondió
-    assert all("fc:fb:fb" not in device["id"] for device in found)  # la MAC nunca viaja
+    assert None in by_vendor  # a device without a known OUI carries no maker
+    assert "name" not in by_vendor[None]  # nor a name if nobody answered
+    assert all("fc:fb:fb" not in device["id"] for device in found)  # the MAC never travels
 
 
 @pytest.mark.parametrize("raw, ip, expected", [
@@ -281,7 +281,7 @@ def test_vendor_table_only_has_valid_ouis():
 
 
 @pytest.mark.parametrize("mac, private", [
-    ("da:a1:19:00:00:01", True),   # segundo bit del primer byte en 1: MAC aleatoria de un celular
+    ("da:a1:19:00:00:01", True),   # second bit of the first byte set: random MAC of a phone
     ("3e:22:fb:00:00:01", True), ("fc:fb:fb:11:22:33", False), ("00-11-22-33-44-55", False),
 ])
 def test_detects_private_random_macs(mac, private):
@@ -305,11 +305,11 @@ def test_devices_mark_private_macs_without_vendor(monkeypatch):
     found = {d.get("vendor"): d for d in agent.devices("192.168.1.2", "sal", wait=0)}
 
     assert found[None]["privateMac"] is True
-    assert "privateMac" not in found["Apple"]  # con fabricante conocido no hace falta
+    assert "privateMac" not in found["Apple"]  # with a known maker it is not needed
 
 
 def mdns_answer(name: str) -> bytes:
-    """Respuesta mDNS de ejemplo: la pregunta por 5.1.168.192.in-addr.arpa y un PTR que apunta a ella comprimida."""
+    """Sample mDNS answer: the question for 5.1.168.192.in-addr.arpa and a PTR that points to it compressed."""
     import struct
     question = agent.dns_name("5.1.168.192.in-addr.arpa")
     rdata = agent.dns_name(name)
@@ -321,7 +321,7 @@ def test_mdns_query_asks_for_the_reverse_name():
     query = agent.mdns_query("192.168.1.5")
     assert query[:12] == b"\0\0\0\0\0\x01\0\0\0\0\0\0"
     assert agent.dns_name("5.1.168.192.in-addr.arpa") in query
-    assert query.endswith(b"\x00\x0c\x80\x01")  # PTR, clase IN con respuesta directa (QU)
+    assert query.endswith(b"\x00\x0c\x80\x01")  # PTR, class IN with a direct answer (QU)
 
 
 def test_parse_mdns_ptr_follows_compression():
@@ -483,7 +483,7 @@ def test_cipher_is_always_short(text, expected):
     assert expected is None or len(agent.cipher_of(text)) <= 20
 
 
-# ------------------------------------------------------------------------------------------------------- tráfico
+# ------------------------------------------------------------------------------------------------------- traffic
 
 PROC_NET_DEV = """Inter-|   Receive                                                |  Transmit
  face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets errs drop fifo colls carrier compressed
@@ -578,7 +578,7 @@ def test_windows_reads_its_own_counters():
     assert {"bytes.in", "bytes.out", "packets.in", "packets.out"} <= counters.keys()
 
 
-# --------------------------------------------------------------------------------- varias redes por Wi-Fi (1.6.0)
+# ------------------------------------------------------------------------------ several networks by Wi-Fi (1.6.0)
 
 CASA, LAB = "wsa_" + "c" * 43, "wsa_" + "l" * 43
 
@@ -694,9 +694,9 @@ def test_the_name_a_phone_gave_when_asking_for_an_address_is_used(monkeypatch):
 
     found = {d.get("vendor"): d for d in agent.devices("192.168.1.2", "sal", wait=0)}
 
-    assert found[None]["name"] == "Galaxy-A54-de-Ana"  # MAC privada: sin DHCP no tendría nombre
+    assert found[None]["name"] == "Galaxy-A54-de-Ana"  # private MAC: without DHCP it would have no name
     assert found[None]["kind"] == "PHONE"
-    assert found["Apple"]["name"] == "iPhone-de-Luis"  # lo que dice el equipo gana al DNS de la red
+    assert found["Apple"]["name"] == "iPhone-de-Luis"  # what the device says wins over the DNS of the network
 
 
 # --------------------------------------------------------------------------------- redes cercanas (1.9.0)

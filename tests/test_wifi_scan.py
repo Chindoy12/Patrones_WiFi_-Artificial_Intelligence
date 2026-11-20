@@ -1,5 +1,5 @@
-"""Escaneo de redes Wi-Fi cercanas del agente (1.9.0). Corre también en Windows real (GitHub Actions, sin conftest):
-ahí además se prueba la llamada real a WlanScan y a netsh."""
+"""Scan of nearby Wi-Fi networks of the agent (1.9.0). It also runs on real Windows (GitHub Actions, without
+conftest): there the real call to WlanScan and to netsh is tested too."""
 import ctypes
 import json
 import os
@@ -50,7 +50,7 @@ SSID 3 : Cafe libre
          Channel            : 1
 """
 
-# Windows 11 en español: banda, carga del punto de acceso ('Utilización del canal' no es el canal) y WPA3.
+# Windows 11 in Spanish: band, load of the access point ('Utilización del canal' is not the channel) and WPA3.
 WINDOWS_11_ES = """
 Nombre de la interfaz : Wi-Fi 2
 Hay 2 redes visibles actualmente.
@@ -107,7 +107,7 @@ LOCATION = ("Network shell commands need location permission to access WLAN info
 
 
 def fake_runner(outputs: dict):
-    """netsh falso: cada comando responde lo que diga el diccionario (por la última palabra del comando)."""
+    """Fake netsh: each command answers what the dictionary says (by the last word of the command)."""
     def runner(args):
         answer = outputs.get(args[-1], CommandResult(0, ""))
         return answer if isinstance(answer, CommandResult) else CommandResult(0, answer)
@@ -125,7 +125,7 @@ def scan_with(outputs, fresh=True, **kwargs):
                           scanner, **kwargs)
 
 
-# ----------------------------------------------------------------------------------------------- lectura de netsh
+# -------------------------------------------------------------------------------------------------- reading netsh
 
 def test_several_networks_with_several_access_points_in_english():
     interface, access_points = wifi_scan.parse_netsh_scan(WINDOWS_10_EN)
@@ -369,7 +369,7 @@ def test_nmcli_missing_or_without_wifi():
 # ------------------------------------------------------------------------------------ escaneo nuevo (WlanScan)
 
 class FakeWlan:
-    """wlanapi.dll falso con dos adaptadores."""
+    """Fake wlanapi.dll with two adapters."""
 
     def __init__(self, open_result=0, scan_result=0):
         self.open_result, self.scan_result = open_result, scan_result

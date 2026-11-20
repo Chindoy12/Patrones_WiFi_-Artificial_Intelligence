@@ -1,5 +1,5 @@
-"""Reconocer los equipos (agente 1.7.0 y 1.8.0): lo que anuncian por mDNS y UPnP, sus puertos, el tipo que se deduce y
-el nombre que dicen al pedir dirección por DHCP."""
+"""Recognising the devices (agent 1.7.0 and 1.8.0): what they announce over mDNS and UPnP, their ports, the kind that
+is deduced and the name they give when asking for an address over DHCP."""
 import socket
 import struct
 
@@ -175,14 +175,14 @@ def test_generic_names_and_other_packets_are_ignored():
     reply = dhcp_request("da:a1:19:00:00:01", (12, b"router"), op=2)
 
     assert "name" not in discovery.parse_dhcp_request(generic)
-    assert discovery.parse_dhcp_request(reply) is None  # una respuesta del servidor, no un equipo
+    assert discovery.parse_dhcp_request(reply) is None  # an answer of the server, not a device
     assert discovery.parse_dhcp_request(b"\x01" * 100) is None
 
 
 def test_the_watcher_remembers_each_device_and_keeps_its_name():
     watcher = discovery.DhcpWatcher()
     watcher.learn(dhcp_request("da:a1:19:00:00:01", (12, b"iPhone-de-Ana")))
-    watcher.learn(dhcp_request("da:a1:19:00:00:01", (60, b"apple")))  # una renovación sin nombre no lo borra
+    watcher.learn(dhcp_request("da:a1:19:00:00:01", (60, b"apple")))  # a renewal without a name does not erase it
     watcher.learn(b"basura")
 
     assert watcher.snapshot() == {"da:a1:19:00:00:01": {"name": "iPhone-de-Ana", "vendorClass": "apple"}}
